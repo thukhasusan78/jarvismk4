@@ -1,0 +1,2343 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis Second Brain</title>
+  <script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.0/dist/3d-force-graph.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three-spritetext@1.10.0/dist/three-spritetext.min.js"></script>
+  <script src="./graph-data.js"></script>
+  <style>
+    :root {
+      --panel: rgba(8, 10, 16, 0.72);
+      --line: rgba(180, 210, 255, 0.16);
+      --text: #d8e4f5;
+      --muted: #7f8da3;
+      --glow: #9ecbff;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: var(--text);
+      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+    }
+    #stars, #graph {
+      position: absolute;
+      inset: 0;
+    }
+    #stars { z-index: 0; }
+    #graph { z-index: 1; background: transparent; }
+    .hud {
+      position: absolute;
+      z-index: 3;
+      pointer-events: none;
+    }
+    .hud * { pointer-events: auto; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      backdrop-filter: blur(10px);
+      box-shadow: 0 0 24px rgba(80, 140, 255, 0.08);
+    }
+    #left {
+      top: 18px;
+      left: 18px;
+      width: 280px;
+      max-height: calc(100vh - 120px);
+      overflow: auto;
+      padding: 16px 16px 12px;
+    }
+    #right-stack {
+      top: 6px;
+      right: 18px;
+      width: 236px;
+    }
+    #right {
+      position: relative;
+      width: auto;
+      padding: 8px 12px;
+    }
+    #right h2 { margin: 0 0 2px; }
+    #right .legend-row {
+      padding: 1px 0;
+      line-height: 1.2;
+      font-size: 11px;
+    }
+    .brand {
+      font-size: 13px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #f2f6ff;
+    }
+    .sub {
+      margin: 6px 0 14px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    input[type="search"], input[type="text"] {
+      width: 100%;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--line);
+      color: var(--text);
+      padding: 8px 10px;
+      border-radius: 999px;
+      outline: none;
+    }
+    input::placeholder { color: #667389; }
+    h2 {
+      margin: 16px 0 8px;
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+    .hint, .excerpt, .hub, .legend-row {
+      font-size: 12px;
+      line-height: 1.45;
+      color: #b7c4d8;
+    }
+    .excerpt { white-space: pre-wrap; max-height: 220px; overflow: auto; }
+    .hub, .legend-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 4px 0;
+      cursor: pointer;
+    }
+    .hub:hover, .legend-row:hover { color: #fff; }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 8px;
+      box-shadow: 0 0 8px currentColor;
+    }
+    .slider-row { margin: 8px 0; font-size: 11px; color: var(--muted); }
+    input[type="range"] { width: 100%; }
+    .inspector-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    #inspector-title { font-size: 18px; margin: 0 0 6px; }
+    #inspector-group { font-size: 11px; color: var(--glow); letter-spacing: 0.08em; text-transform: uppercase; }
+    #close-focus {
+      background: transparent;
+      color: #dbe7ff;
+      border: 1px solid rgba(180, 210, 255, 0.35);
+      padding: 4px 10px;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    #close-focus:hover { background: rgba(255,255,255,0.08); }
+    #reactor-wrap {
+      margin-top: 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+    #jarvis {
+      position: relative;
+      width: 168px;
+      height: 168px;
+    }
+    .reactor-spin {
+      position: absolute;
+      inset: 0;
+      animation: spin 28s linear infinite;
+    }
+    .reactor-ticks {
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      background:
+        conic-gradient(from 300deg, rgba(190, 255, 246, 0.15) 0 70deg, rgba(150, 255, 240, 0.95) 70deg 150deg, rgba(190, 255, 246, 0.2) 150deg 360deg),
+        repeating-conic-gradient(from 0deg, #bffff6 0deg 1.1deg, transparent 1.1deg 6deg);
+      -webkit-mask: radial-gradient(circle, transparent 68%, #000 69.2%, #000 76%, transparent 77.2%);
+      mask: radial-gradient(circle, transparent 68%, #000 69.2%, #000 76%, transparent 77.2%);
+    }
+    .reactor-arc {
+      position: absolute;
+      border-radius: 50%;
+      border: 3px solid transparent;
+      filter: drop-shadow(0 0 3px rgba(120, 255, 236, 0.85));
+    }
+    .reactor-arc-outer {
+      inset: 18px;
+      border-top-color: #9ffcf2;
+      border-left-color: #7ef6ea;
+      transform: rotate(-40deg);
+    }
+    .reactor-arc-inner {
+      inset: 34px;
+      border-right-color: #d8fff8;
+      border-bottom-color: #7ef6ea;
+      transform: rotate(18deg);
+    }
+    .reactor-disc {
+      position: absolute;
+      inset: 46px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 50% 45%, #143a38 0%, #071614 72%);
+      border: 1px solid rgba(140, 230, 216, 0.45);
+      box-shadow: inset 0 0 12px rgba(40, 180, 160, 0.35), 0 0 16px rgba(60, 220, 200, 0.15);
+      display: grid;
+      place-items: center;
+    }
+    .reactor-label {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      color: #d9fff8;
+      text-shadow: 0 0 8px rgba(160, 255, 240, 0.7);
+    }
+    .reactor-dot {
+      position: absolute;
+      width: 4px;
+      height: 4px;
+      border-radius: 50%;
+      background: #e8fff9;
+      box-shadow: 0 0 6px #9ffcf2;
+    }
+    .reactor-controls {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      color: #8ee8dc;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+    }
+    .reactor-row { display: flex; gap: 8px; align-items: center; }
+    .pill, .mode, .toggle {
+      border: 1px solid rgba(110, 210, 200, 0.45);
+      background: rgba(8, 16, 18, 0.85);
+      border-radius: 999px;
+      color: #9aefe4;
+      padding: 4px 10px;
+      line-height: 1.4;
+    }
+    .pill { display: inline-flex; align-items: center; gap: 6px; }
+    .led {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      border: 1px solid #9aefe4;
+      display: inline-block;
+    }
+    .reactor-modes { display: flex; gap: 6px; }
+    .mode { padding: 3px 8px; font-size: 9px; }
+    .mode.on {
+      background: rgba(40, 120, 120, 0.55);
+      border-color: rgba(170, 255, 245, 0.7);
+      color: #e9fffb;
+    }
+    .reactor-toggles { width: 168px; display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+    .toggle {
+      display: flex;
+      justify-content: space-between;
+      border-radius: 10px;
+      padding: 6px 12px;
+    }
+    .toggle .state { color: rgba(154, 239, 228, 0.45); letter-spacing: 0.04em; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #chatbar {
+      position: absolute;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      width: min(720px, calc(100vw - 40px));
+      z-index: 4;
+      padding: 10px 12px 12px;
+      border-radius: 18px;
+    }
+    #answer {
+      min-height: 0;
+      margin: 0 8px 8px;
+      font-size: 13px;
+      color: #c9d6ea;
+    }
+    #answer .file-sent {
+      margin: 0 0 4px;
+      color: #9fd2ff;
+      font-size: 12px;
+    }
+    #tab-attached {
+      margin: 0 8px 8px;
+      color: #9fd2ff;
+      font-size: 12px;
+    }
+    #tab-picker {
+      margin: 0 8px 8px;
+      padding: 8px 10px;
+      border-radius: 12px;
+      background: rgba(8, 16, 28, 0.88);
+      box-shadow: 0 0 0 1px rgba(180, 210, 255, 0.16);
+    }
+    #tab-picker-prompt {
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: #d8e4f5;
+    }
+    #tab-picker-list {
+      max-height: 168px;
+      overflow: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .tab-choice {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: auto auto;
+      column-gap: 8px;
+      align-items: center;
+      padding: 4px 2px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .tab-choice input { grid-row: 1 / span 2; }
+    .tab-choice-title { color: #d8e4f5; }
+    .tab-choice-url {
+      min-width: 0;
+      color: var(--muted);
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #tab-picker-status {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: #e7b4b4;
+    }
+    #tab-picker-status:empty { display: none; }
+    .tab-picker-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .tab-picker-actions button {
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+    .attach-row {
+      display: flex;
+      justify-content: flex-end;
+      margin: 0 0 8px;
+    }
+    #attach-tab {
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: #17324f;
+      color: #9fd2ff;
+      font-size: 12px;
+      font-weight: 600;
+      box-shadow: 0 0 0 1px rgba(159, 210, 255, 0.35);
+    }
+    #voice-status {
+      min-height: 1.2em;
+      margin: 0 8px 6px;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .chat-row { display: flex; gap: 8px; align-items: center; }
+    #chat-input {
+      flex: 1;
+      border-radius: 999px;
+      padding: 10px 14px;
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: #d8e6ff;
+      color: #111;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    .icon-btn {
+      width: 42px;
+      height: 42px;
+      padding: 0;
+      flex: 0 0 42px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(216, 230, 255, 0.94);
+      color: #122033;
+      box-shadow: 0 0 0 1px rgba(180, 210, 255, 0.22);
+    }
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+    #google-connect.connected {
+      background: #17324f;
+      color: #9fd2ff;
+      box-shadow: 0 0 0 1px rgba(159, 210, 255, 0.55), 0 0 14px rgba(80, 160, 255, 0.28);
+    }
+    #mic.listening {
+      background: #ffd8d8;
+      color: #4a1212;
+      box-shadow: 0 0 0 1px rgba(226, 80, 80, 0.45);
+    }
+    #screen.seeing {
+      background: #e23b3b;
+      color: #fff;
+      box-shadow: 0 0 0 1px rgba(255, 180, 180, 0.45);
+    }
+    #tools-drawer {
+      position: fixed;
+      inset: 0;
+      z-index: 8;
+      pointer-events: none;
+    }
+    #tools-drawer.open { pointer-events: auto; }
+    #tools-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(2, 6, 12, 0.55);
+      opacity: 0;
+      transition: opacity 0.28s ease;
+    }
+    #tools-drawer.open #tools-backdrop { opacity: 1; }
+    #tools-sheet {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      width: min(880px, 100vw);
+      max-height: min(78vh, 640px);
+      overflow: auto;
+      padding: 18px 22px 24px;
+      border-radius: 22px 22px 0 0;
+      transform: translate(-50%, 110%);
+      transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #tools-drawer.open #tools-sheet { transform: translate(-50%, 0); }
+    .tools-handle {
+      width: 42px;
+      height: 4px;
+      margin: 0 auto 14px;
+      border-radius: 999px;
+      background: rgba(180, 210, 255, 0.28);
+    }
+    .tools-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .tools-head h2 {
+      margin: 0;
+      font-size: 16px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .tools-head p {
+      margin: 6px 0 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    #tools-close {
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      flex: 0 0 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(216, 230, 255, 0.16);
+      color: #d8e4f5;
+    }
+    #tools-close svg { width: 16px; height: 16px; display: block; }
+    .tool-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .tool-card {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 14px 14px 12px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(10, 16, 26, 0.72);
+    }
+    .tool-mark {
+      width: 36px;
+      height: 36px;
+      flex: 0 0 36px;
+      border-radius: 10px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(216, 230, 255, 0.08);
+      color: #c9d6ea;
+    }
+    .tool-mark svg { width: 18px; height: 18px; display: block; }
+    .tool-card h3 {
+      margin: 0 0 4px;
+      font-size: 13px;
+    }
+    .tool-card p {
+      margin: 0;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+    .tool-status {
+      display: inline-flex;
+      margin-top: 8px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(127, 141, 163, 0.18);
+      color: #9aa8bd;
+    }
+    .tool-status.on {
+      background: rgba(34, 197, 110, 0.16);
+      color: #7ee0a8;
+    }
+    .tools-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 16px;
+    }
+    #google-grant {
+      background: #d8e6ff;
+      color: #111;
+    }
+    @media (max-width: 640px) {
+      .tool-grid { grid-template-columns: 1fr; }
+    }
+    #seeing {
+      display: none;
+      margin: 0 8px 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #e23b3b;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      width: fit-content;
+      animation: seeing-pulse 1s ease-in-out infinite;
+    }
+    #seeing.on { display: inline-flex; }
+    #brain {
+      display: inline-flex;
+      margin: 0 8px 8px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      background: #17324f;
+      color: #9fd2ff;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+    @keyframes seeing-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
+    #share-preview { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <canvas id="stars"></canvas>
+  <div id="graph"></div>
+
+  <aside id="left" class="hud panel">
+    <div class="brand">Jarvis Second Brain</div>
+    <div class="sub" id="stats">indexing notes…</div>
+    <input id="search" type="search" placeholder="Search the graph…">
+    <h2>Inspector</h2>
+    <div id="inspector-empty" class="hint">Click a node to fly to it — any quiet node will light its neighbors and open an excerpt.</div>
+    <div id="inspector" hidden>
+      <div class="inspector-head">
+        <div id="inspector-group"></div>
+        <button id="close-focus" type="button">Close</button>
+      </div>
+      <h3 id="inspector-title"></h3>
+      <div class="excerpt" id="inspector-excerpt"></div>
+    </div>
+    <h2>Top hubs</h2>
+    <div id="hubs"></div>
+    <h2>Forces</h2>
+    <div class="slider-row">Repel <input id="repel" type="range" min="40" max="280" value="120"></div>
+    <div class="slider-row">Link length <input id="linklen" type="range" min="20" max="160" value="36"></div>
+  </aside>
+
+  <div id="right-stack" class="hud">
+    <aside id="right" class="panel">
+      <h2 style="margin-top:0">Filter</h2>
+      <div id="legend"></div>
+    </aside>
+    <div id="reactor-wrap">
+      <div id="jarvis">
+        <div class="reactor-spin">
+          <div class="reactor-ticks"></div>
+          <div class="reactor-arc reactor-arc-outer"></div>
+          <div class="reactor-arc reactor-arc-inner"></div>
+        </div>
+        <div class="reactor-disc">
+          <span class="reactor-label">J.A.R.V.I.S.</span>
+          <i class="reactor-dot"></i>
+        </div>
+      </div>
+      <div class="reactor-controls">
+        <div class="reactor-row">
+          <span class="pill"><i class="led"></i>ONLINE</span>
+          <span class="pill" id="brain-pill">‹ GEMINI FLASH ›</span>
+        </div>
+        <div class="reactor-modes">
+          <span class="mode on">RING</span>
+          <span class="mode">CUBE</span>
+          <span class="mode">FACE</span>
+        </div>
+        <div class="reactor-toggles">
+          <div class="toggle"><span>EYES</span><span class="state">off</span></div>
+          <div class="toggle"><span>WATCH</span><span class="state">off</span></div>
+          <div class="toggle"><span>HOLO</span><span class="state">off</span></div>
+          <div class="toggle"><span>FOCUS</span><span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <video id="share-preview" autoplay muted playsinline></video>
+  <form id="chatbar" class="panel">
+    <div id="answer"></div>
+    <div id="tab-attached" hidden></div>
+    <div id="brain">GEMINI FLASH</div>
+    <div id="seeing">SEEING</div>
+    <div id="voice-status"></div>
+    <div id="tab-picker" hidden role="region" aria-labelledby="tab-picker-prompt">
+      <p id="tab-picker-prompt">Which tab did you mean?</p>
+      <div id="tab-picker-list"></div>
+      <p id="tab-picker-status"></p>
+      <div class="tab-picker-actions">
+        <button id="tab-picker-confirm" type="button" disabled>Use this tab</button>
+        <button id="tab-picker-cancel" type="button">Cancel</button>
+      </div>
+    </div>
+    <div class="attach-row">
+      <button id="attach-tab" type="button">Let Jarvis take over this tab</button>
+    </div>
+    <div class="chat-row">
+      <input id="chat-input" type="text" autocomplete="off" placeholder="Ask what the notes know — hours, cash, holiday, training…">
+      <button id="google-connect" class="icon-btn" type="button" aria-label="Available tools" title="Available tools">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M9.5 7.5 7 10a3.2 3.2 0 0 0 4.5 4.5l1.2-1.2"/>
+          <path d="M14.5 16.5 17 14a3.2 3.2 0 0 0-4.5-4.5L11.3 10.7"/>
+        </svg>
+      </button>
+      <button id="screen" class="icon-btn" type="button" aria-label="Screen" title="Screen">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3.5" y="4.5" width="17" height="11.5" rx="2"/>
+          <path d="M8 20h8M12 16v4"/>
+        </svg>
+      </button>
+      <button id="mic" class="icon-btn" type="button" aria-label="Mic" title="Mic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="9" y="3.5" width="6" height="11" rx="3"/>
+          <path d="M6.5 11.5a5.5 5.5 0 0 0 11 0M12 17v3.5M9 20.5h6"/>
+        </svg>
+      </button>
+      <button id="ask" class="icon-btn" type="submit" aria-label="Ask" title="Ask">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4.5 12 19 5.5 12.8 19l-1.6-6.1L4.5 12z"/>
+        </svg>
+      </button>
+    </div>
+  </form>
+
+  <div id="tools-drawer" aria-hidden="true">
+    <div id="tools-backdrop"></div>
+    <aside id="tools-sheet" class="panel" role="dialog" aria-labelledby="tools-title" aria-modal="true">
+      <div class="tools-handle"></div>
+      <div class="tools-head">
+        <div>
+          <h2 id="tools-title">Available tools</h2>
+          <p>Gmail and Calendar are on this login. Reconnect Google to add Drive and Docs.</p>
+        </div>
+        <button id="tools-close" type="button" aria-label="Close tools">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true">
+            <path d="M6 6l12 12M18 6 6 18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="tool-grid">
+        <article class="tool-card">
+          <span class="tool-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="5" width="17" height="14" rx="2"/>
+              <path d="m4 7 8 6 8-6"/>
+            </svg>
+          </span>
+          <div>
+            <h3>Gmail</h3>
+            <p>Unread, search, read, and draft. Messages are never sent.</p>
+            <span class="tool-status" data-tool-status="gmail">Not connected</span>
+          </div>
+        </article>
+        <article class="tool-card">
+          <span class="tool-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3.5" y="5" width="17" height="15" rx="2"/>
+              <path d="M8 3.5v3M16 3.5v3M3.5 10h17"/>
+            </svg>
+          </span>
+          <div>
+            <h3>Calendar</h3>
+            <p>List upcoming events, add a meeting, or move one later.</p>
+            <span class="tool-status" data-tool-status="calendar">Not connected</span>
+          </div>
+        </article>
+        <article class="tool-card">
+          <span class="tool-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m12 4 8 14H4L12 4z"/>
+              <path d="M8.2 18 12 11.2 15.8 18"/>
+            </svg>
+          </span>
+          <div>
+            <h3>Drive</h3>
+            <p>Search files and read Docs, Sheets, or Slides as text.</p>
+            <span class="tool-status" data-tool-status="drive">Not connected</span>
+          </div>
+        </article>
+        <article class="tool-card">
+          <span class="tool-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M7 3.5h7l5 5V20a1.5 1.5 0 0 1-1.5 1.5H7A1.5 1.5 0 0 1 5.5 20V5A1.5 1.5 0 0 1 7 3.5z"/>
+              <path d="M14 3.5V9h5.5M8.5 13h7M8.5 16.5h5"/>
+            </svg>
+          </span>
+          <div>
+            <h3>Docs</h3>
+            <p>Read, create, append, or replace a Google Doc body.</p>
+            <span class="tool-status" data-tool-status="docs">Not connected</span>
+          </div>
+        </article>
+      </div>
+      <div class="tools-actions">
+        <button id="google-grant" type="button">Connect Google</button>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const CLUSTER_MIN = 4;
+    const COLORS = {
+      Strategy: "#e6b325",
+      Operations: "#2f86e8",
+      Finance: "#d5deea",
+      People: "#22c56e",
+      Customers: "#f07a1a",
+      Marketing: "#e85a9a",
+      Products: "#1ec9bb",
+      Sales: "#a855f0",
+      Digital: "#3dca84",
+      Metrics: "#e6b325",
+      Risks: "#e23b3b",
+      captures: "#ffcf6e"
+    };
+    const HOME = { x: 0, y: 40, z: 360 };
+    const fallback = ["#6ea8ff", "#5ad48a", "#f0a35e", "#f3b3d4", "#5fd0c8", "#f2d15c"];
+    const PULSE_MS = 700;
+    const degree = new Map();
+    const hidden = new Set();
+    let Graph;
+    let selected = null;
+    let neighborIds = new Set();
+    let pulseNodeId = null;
+    let pulseUntil = 0;
+
+    function rebuildDegrees() {
+      degree.clear();
+      (GRAPH.links || []).forEach((link) => {
+        const s = typeof link.source === "object" ? link.source.id : link.source;
+        const t = typeof link.target === "object" ? link.target.id : link.target;
+        degree.set(s, (degree.get(s) || 0) + 1);
+        degree.set(t, (degree.get(t) || 0) + 1);
+      });
+      GRAPH.nodes.forEach((node) => {
+        node.val = 2 + (degree.get(node.id) || 0);
+      });
+    }
+    rebuildDegrees();
+
+    function colorFor(group) {
+      if (COLORS[group]) return COLORS[group];
+      const groups = [...new Set(GRAPH.nodes.map((n) => n.group))];
+      return fallback[groups.indexOf(group) % fallback.length];
+    }
+
+    function neighborsOf(id) {
+      const set = new Set([id]);
+      GRAPH.links.forEach((link) => {
+        const s = typeof link.source === "object" ? link.source.id : link.source;
+        const t = typeof link.target === "object" ? link.target.id : link.target;
+        if (s === id) set.add(t);
+        if (t === id) set.add(s);
+      });
+      return set;
+    }
+
+    function highlightActive() {
+      return selected != null || neighborIds.size > 0;
+    }
+
+    function isNodeLit(node) {
+      return !highlightActive() || neighborIds.has(node.id);
+    }
+
+    function nodeColor(node) {
+      const base = colorFor(node.group);
+      if (hidden.has(node.group)) return "rgba(255,255,255,0.04)";
+      return isNodeLit(node) ? base : "rgba(255,255,255,0.12)";
+    }
+
+    function drawStars() {
+      const canvas = document.getElementById("stars");
+      const ctx = canvas.getContext("2d");
+      const stars = [];
+      function resize() {
+        canvas.width = innerWidth;
+        canvas.height = innerHeight;
+        stars.length = 0;
+        for (let i = 0; i < 220; i += 1) {
+          stars.push({
+            x: Math.random() * canvas.width,
+            y: Math.random() * canvas.height,
+            r: Math.random() * 1.2,
+            a: 0.25 + Math.random() * 0.6
+          });
+        }
+      }
+      function tick() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        stars.forEach((star) => {
+          ctx.beginPath();
+          ctx.fillStyle = `rgba(210,225,255,${star.a})`;
+          ctx.arc(star.x, star.y, star.r, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+      resize();
+      tick();
+      addEventListener("resize", () => { resize(); tick(); });
+    }
+
+    function openInspector(node) {
+      document.getElementById("inspector-empty").hidden = true;
+      document.getElementById("inspector").hidden = false;
+      document.getElementById("inspector-group").textContent = node.group;
+      document.getElementById("inspector-title").textContent = node.label;
+      document.getElementById("inspector-excerpt").textContent = node.excerpt;
+    }
+
+    const FLY_MS = 1000;
+    let flyToken = 0;
+
+    function easeOut(t) {
+      return 1 - Math.pow(1 - t, 3);
+    }
+
+    function flyCameraToward(getPose, resumeRotate) {
+      const controls = Graph.controls();
+      const camera = Graph.camera();
+      const fromPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+      const fromTarget = { x: controls.target.x, y: controls.target.y, z: controls.target.z };
+      const token = ++flyToken;
+      const started = performance.now();
+      controls.autoRotate = false;
+      if (controls._sphericalDelta) controls._sphericalDelta.set(0, 0, 0);
+
+      function frame(now) {
+        if (token !== flyToken) return;
+        const t = Math.min(1, (now - started) / FLY_MS);
+        const e = easeOut(t);
+        const pose = getPose();
+        camera.position.set(
+          fromPos.x + (pose.pos.x - fromPos.x) * e,
+          fromPos.y + (pose.pos.y - fromPos.y) * e,
+          fromPos.z + (pose.pos.z - fromPos.z) * e
+        );
+        controls.target.set(
+          fromTarget.x + (pose.target.x - fromTarget.x) * e,
+          fromTarget.y + (pose.target.y - fromTarget.y) * e,
+          fromTarget.z + (pose.target.z - fromTarget.z) * e
+        );
+        controls.update();
+        if (t < 1) requestAnimationFrame(frame);
+        else if (resumeRotate) controls.autoRotate = true;
+      }
+      requestAnimationFrame(frame);
+    }
+
+    function nodePose(node) {
+      const live = Graph.graphData().nodes.find((n) => n.id === node.id) || node;
+      const distance = 140;
+      const len = Math.hypot(live.x || 1, live.y || 1, live.z || 1) || 1;
+      return {
+        pos: {
+          x: live.x + (live.x / len) * distance,
+          y: live.y + (live.y / len) * distance,
+          z: live.z + (live.z / len) * distance
+        },
+        target: { x: live.x || 0, y: live.y || 0, z: live.z || 0 }
+      };
+    }
+
+    function flyCameraTo(node) {
+      flyCameraToward(() => nodePose(node), false);
+    }
+
+    function focusNode(node) {
+      if (!node) return;
+      if (selected === node.id) {
+        clearFocus();
+        return;
+      }
+      selected = node.id;
+      neighborIds = neighborsOf(node.id);
+      openInspector(node);
+      applyFlow();
+      Graph.refresh();
+      flyCameraTo(node);
+    }
+
+    function clearFocus() {
+      selected = null;
+      neighborIds = new Set();
+      document.getElementById("inspector").hidden = true;
+      document.getElementById("inspector-empty").hidden = false;
+      applyFlow();
+      Graph.refresh();
+      flyCameraToward(() => ({ pos: HOME, target: { x: 0, y: 0, z: 0 } }), true);
+    }
+
+    function linkEnds(link) {
+      return {
+        s: typeof link.source === "object" ? link.source.id : link.source,
+        t: typeof link.target === "object" ? link.target.id : link.target
+      };
+    }
+
+    function particleCount(link) {
+      if (!highlightActive()) return 3;
+      const { s, t } = linkEnds(link);
+      if (selected != null) return s === selected || t === selected ? 6 : 0;
+      return neighborIds.has(s) && neighborIds.has(t) ? 6 : 0;
+    }
+
+    function particleColor(link) {
+      if (!highlightActive()) return "#ffffff";
+      const { s, t } = linkEnds(link);
+      if (selected != null) return s === selected || t === selected ? "#ffffff" : "rgba(0,0,0,0)";
+      return neighborIds.has(s) && neighborIds.has(t) ? "#ffffff" : "rgba(0,0,0,0)";
+    }
+
+    function applyFlow() {
+      const data = Graph.graphData();
+      Graph.linkDirectionalParticles(particleCount);
+      Graph.linkDirectionalParticleColor(particleColor);
+      Graph.graphData({
+        nodes: data.nodes,
+        links: data.links.map((link) => ({
+          source: typeof link.source === "object" ? link.source.id : link.source,
+          target: typeof link.target === "object" ? link.target.id : link.target
+        }))
+      });
+    }
+
+    function visibleGraph() {
+      return {
+        nodes: GRAPH.nodes.filter((n) => !hidden.has(n.group)),
+        links: GRAPH.links.filter((link) => {
+          const s = typeof link.source === "object" ? link.source.id : link.source;
+          const t = typeof link.target === "object" ? link.target.id : link.target;
+          const src = GRAPH.nodes[s];
+          const dst = GRAPH.nodes[t];
+          return src && dst && !hidden.has(src.group) && !hidden.has(dst.group);
+        })
+      };
+    }
+
+    function renderLegend() {
+      const counts = {};
+      GRAPH.nodes.forEach((n) => { counts[n.group] = (counts[n.group] || 0) + 1; });
+      const legend = document.getElementById("legend");
+      legend.innerHTML = "";
+      Object.keys(counts).sort().forEach((group) => {
+        const row = document.createElement("div");
+        row.className = "legend-row";
+        row.innerHTML = `<span><span class="dot" style="background:${colorFor(group)};color:${colorFor(group)}"></span>${group}</span><span>${counts[group]}</span>`;
+        row.style.opacity = hidden.has(group) ? 0.35 : 1;
+        row.onclick = () => {
+          if (hidden.has(group)) hidden.delete(group);
+          else hidden.add(group);
+          Graph.graphData(visibleGraph());
+          renderLegend();
+        };
+        legend.appendChild(row);
+      });
+    }
+
+    function renderHubs() {
+      const hubs = [...GRAPH.nodes]
+        .sort((a, b) => (degree.get(b.id) || 0) - (degree.get(a.id) || 0))
+        .slice(0, 6);
+      const root = document.getElementById("hubs");
+      root.innerHTML = "";
+      hubs.forEach((node) => {
+        const row = document.createElement("div");
+        row.className = "hub";
+        row.innerHTML = `<span>${node.label}</span><span>${degree.get(node.id) || 0}</span>`;
+        row.onclick = () => focusNode(node);
+        root.appendChild(row);
+      });
+    }
+
+    function isSmallTalk(question) {
+      const q = String(question || "").trim();
+      return /^(?:(?:good\s+)?(?:morning|afternoon|evening|night)|hello|hi+|hey|yo|howdy|thanks?(?:\s+you)?|cheers|bye|goodbye|how\s+are\s+you|how'?s\s+it\s+going|what'?s\s+up|(?:tell\s+me\s+)?(?:a\s+)?joke|lol|haha|(?:ok|okay|cool|nice|great|got\s+it)\s*[.!?]*)$/i.test(q)
+        || /^(?:good\s+)?(?:morning|afternoon|evening|night)\b/i.test(q)
+        || /^(?:hello|hi+|hey|yo|howdy)\b/i.test(q)
+        || /^(?:thanks?(?:\s+you)?|cheers|bye|goodbye)\b/i.test(q)
+        || /\bjoke\b/i.test(q);
+    }
+
+    function aboutNotes(question) {
+      return !isSmallTalk(question);
+    }
+
+    function lightCluster(ids) {
+      selected = null;
+      neighborIds = new Set(ids);
+      document.getElementById("inspector").hidden = true;
+      document.getElementById("inspector-empty").hidden = false;
+      applyFlow();
+      Graph.refresh();
+      const nodes = ids.map((id) => GRAPH.nodes[id]).filter(Boolean);
+      flyCameraToward(() => clusterPose(nodes), false);
+    }
+
+    function clusterPose(nodes) {
+      const live = nodes.map((node) => Graph.graphData().nodes.find((n) => n.id === node.id) || node);
+      const count = live.length || 1;
+      const center = live.reduce(
+        (sum, node) => ({ x: sum.x + (node.x || 0), y: sum.y + (node.y || 0), z: sum.z + (node.z || 0) }),
+        { x: 0, y: 0, z: 0 }
+      );
+      center.x /= count;
+      center.y /= count;
+      center.z /= count;
+      let reach = 40;
+      live.forEach((node) => {
+        reach = Math.max(reach, Math.hypot((node.x || 0) - center.x, (node.y || 0) - center.y, (node.z || 0) - center.z));
+      });
+      const camera = Graph.camera().position;
+      let vx = camera.x - center.x;
+      let vy = camera.y - center.y;
+      let vz = camera.z - center.z;
+      const len = Math.hypot(vx, vy, vz) || 1;
+      const distance = reach + 180;
+      return {
+        pos: {
+          x: center.x + (vx / len) * distance,
+          y: center.y + (vy / len) * distance,
+          z: center.z + (vz / len) * distance
+        },
+        target: center
+      };
+    }
+
+    function flyToSource(node) {
+      selected = node.id;
+      neighborIds = neighborsOf(node.id);
+      openInspector(node);
+      applyFlow();
+      Graph.refresh();
+      flyCameraTo(node);
+    }
+
+    function showAnswerSources(ids) {
+      const sources = [];
+      (ids || []).forEach((id) => {
+        const node = GRAPH.nodes[id];
+        if (node) sources.push(node);
+      });
+      if (!sources.length) return;
+      if (sources.length >= CLUSTER_MIN) {
+        lightCluster(sources.map((node) => node.id));
+        return;
+      }
+      flyToSource(sources[0]);
+    }
+
+    function adoptGraph(nextGraph, birth) {
+      const liveByPath = new Map();
+      Graph.graphData().nodes.forEach((node) => {
+        if (node.path) liveByPath.set(node.path, node);
+      });
+      GRAPH.nodes = (nextGraph.nodes || []).map((node) => {
+        const prev = liveByPath.get(node.path);
+        const copy = Object.assign({}, node);
+        if (prev) {
+          copy.x = prev.x;
+          copy.y = prev.y;
+          copy.z = prev.z;
+          copy.vx = prev.vx;
+          copy.vy = prev.vy;
+          copy.vz = prev.vz;
+        }
+        return copy;
+      });
+      GRAPH.links = (nextGraph.links || []).map((link) => ({
+        source: typeof link.source === "object" ? link.source.id : link.source,
+        target: typeof link.target === "object" ? link.target.id : link.target
+      }));
+      rebuildDegrees();
+      if (birth) {
+        const born = GRAPH.nodes.find((node) => node.id === birth.id);
+        const anchor = GRAPH.nodes.find((node) => node.id === birth.anchorId);
+        if (born && anchor && Number.isFinite(anchor.x)) {
+          born.x = anchor.x + 6;
+          born.y = anchor.y + 4;
+          born.z = anchor.z + 3;
+        } else if (born) {
+          born.x = 6;
+          born.y = 4;
+          born.z = 3;
+        }
+        if (born) {
+          born.vx = 0;
+          born.vy = 0;
+          born.vz = 0;
+          born.fx = born.x;
+          born.fy = born.y;
+          born.fz = born.z;
+        }
+      }
+      document.getElementById("stats").textContent =
+        `${GRAPH.nodes.length} notes indexed`;
+      Graph.graphData(visibleGraph());
+      renderLegend();
+      renderHubs();
+    }
+
+    function pulseThenFly(node) {
+      if (!node) return;
+      pulseNodeId = node.id;
+      pulseUntil = performance.now() + PULSE_MS;
+      selected = node.id;
+      neighborIds = neighborsOf(node.id);
+      openInspector(node);
+      applyFlow();
+      Graph.refresh();
+      setTimeout(() => {
+        pulseNodeId = null;
+        const live = Graph.graphData().nodes.find((item) => item.id === node.id)
+          || GRAPH.nodes.find((item) => item.id === node.id)
+          || node;
+        live.fx = undefined;
+        live.fy = undefined;
+        live.fz = undefined;
+        flyCameraTo(live);
+      }, PULSE_MS);
+    }
+
+    drawStars();
+    document.getElementById("stats").textContent =
+      `${GRAPH.nodes.length} notes indexed`;
+    document.getElementById("answer").textContent = "Hello, ဆရာ.";
+
+    Graph = ForceGraph3D({
+      controlType: "orbit",
+      rendererConfig: {
+        antialias: true,
+        alpha: true,
+        powerPreference: "high-performance"
+      }
+    })(document.getElementById("graph"))
+      .graphData(GRAPH)
+      .backgroundColor("rgba(0,0,0,0)")
+      .showNavInfo(false)
+      .nodeRelSize(4)
+      .nodeResolution(64)
+      .nodeVal((n) => n.val)
+      .nodeOpacity(1)
+      .nodeColor(nodeColor)
+      .linkColor(() => "rgba(210, 230, 255, 0.55)")
+      .linkOpacity(1)
+      .linkWidth((link) => {
+        if (!highlightActive()) return 0.55;
+        const s = typeof link.source === "object" ? link.source.id : link.source;
+        const t = typeof link.target === "object" ? link.target.id : link.target;
+        return neighborIds.has(s) && neighborIds.has(t) ? 1.5 : 0.15;
+      })
+      .linkDirectionalParticles(particleCount)
+      .linkDirectionalParticleSpeed(0.008)
+      .linkDirectionalParticleWidth(1.8)
+      .linkDirectionalParticleResolution(16)
+      .linkDirectionalParticleColor(() => "#ffffff")
+      .nodeLabel((n) => `${n.label}`)
+      .onNodeClick(focusNode)
+      .onBackgroundClick(clearFocus);
+
+    const pixelRatio = Math.max(window.devicePixelRatio || 1, 2);
+    Graph.renderer().setPixelRatio(pixelRatio);
+    addEventListener("resize", () => Graph.renderer().setPixelRatio(pixelRatio));
+
+    Graph.onEngineTick(() => {
+      const now = performance.now();
+      Graph.scene().traverse((obj) => {
+        if (obj.isLight && !obj.userData.boosted) {
+          obj.intensity *= 3;
+          obj.userData.boosted = true;
+        }
+        if (!obj.isMesh || !obj.material || !obj.material.emissive) return;
+        if (pulseNodeId != null && obj.userData.nodeId === pulseNodeId && now < pulseUntil) {
+          const t = 1 - (pulseUntil - now) / PULSE_MS;
+          const wave = 0.5 + 0.5 * Math.sin(t * Math.PI * 4);
+          obj.material.emissiveIntensity = 0.5 + wave * 2.4;
+          obj.material.opacity = 1;
+          return;
+        }
+        if (!obj.userData.bright) {
+          obj.material.emissive.copy(obj.material.color);
+          obj.material.emissiveIntensity = 0.22;
+          obj.userData.bright = true;
+        }
+      });
+    });
+
+    if (typeof THREE !== "undefined" && typeof SpriteText !== "undefined") {
+      Graph.nodeThreeObject((node) => {
+        const group = new THREE.Group();
+        const pulsing = pulseNodeId != null && node.id === pulseNodeId;
+        const lit = pulsing || isNodeLit(node);
+        const color = new THREE.Color(colorFor(node.group));
+        const sphere = new THREE.Mesh(
+          new THREE.SphereGeometry(2.7 + Math.min(node.val, 8) * 0.42, 16, 16),
+          new THREE.MeshLambertMaterial({
+            color,
+            emissive: color,
+            emissiveIntensity: pulsing ? 2.4 : (lit ? 0.7 : 0.08),
+            transparent: true,
+            opacity: pulsing ? 1 : (lit ? 0.95 : 0.2)
+          })
+        );
+        sphere.userData.nodeId = node.id;
+        const sprite = new SpriteText(node.label);
+        sprite.color = lit ? "#e8eef8" : "#4a5568";
+        sprite.textHeight = 3.2;
+        sprite.position.y = 6;
+        group.add(sphere);
+        group.add(sprite);
+        return group;
+      }).nodeThreeObjectExtend(false);
+    }
+
+    Graph.d3Force("charge").strength(-120);
+    Graph.d3Force("link").distance(36);
+    Graph.controls().autoRotate = true;
+    Graph.controls().autoRotateSpeed = 0.35;
+    Graph.cameraPosition(HOME);
+    document.getElementById("close-focus").addEventListener("click", clearFocus);
+    addEventListener("keydown", (event) => {
+      if (event.key === "Escape") clearFocus();
+    });
+
+    renderLegend();
+    renderHubs();
+
+    document.getElementById("search").addEventListener("input", (event) => {
+      const q = event.target.value.trim().toLowerCase();
+      if (!q) return;
+      const hit = GRAPH.nodes.find((n) => n.label.toLowerCase().includes(q));
+      if (hit) focusNode(hit);
+    });
+    document.getElementById("repel").addEventListener("input", (event) => {
+      Graph.d3Force("charge").strength(-Number(event.target.value));
+      Graph.numDimensions(3);
+    });
+    document.getElementById("linklen").addEventListener("input", (event) => {
+      Graph.d3Force("link").distance(Number(event.target.value));
+      Graph.numDimensions(3);
+    });
+
+    const VOICE_PING_MS = 10000;
+    const VOICE_PONG_DEAD_MS = 25000;
+    const muted = new URLSearchParams(location.search).get("mute") === "1";
+    let voiceStatus = "";
+    let listenWanted = false;
+    let sendingPcm = false;
+    let acceptAudio = false;
+    let voiceSocket = null;
+    let voiceOpening = null;
+    let voiceRetry = null;
+    let lastVoicePong = 0;
+    let voiceRetired = false;
+    let pageUnloading = false;
+
+    function voiceSocketUrl() {
+      const host = location.hostname;
+      const local = !host || host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
+      return "ws://" + (local ? "127.0.0.1" : host) + ":4702/live";
+    }
+    let micStream = null;
+    let micContext = null;
+    let micNode = null;
+    let playContext = null;
+    let playNext = 0;
+    let playSources = [];
+    let playWait = null;
+    let askBusy = false;
+
+    function setVoiceStatus(state) {
+      voiceStatus = state || "";
+      document.getElementById("voice-status").textContent = voiceStatus;
+    }
+
+    function voiceOpen() {
+      return !!(voiceSocket && voiceSocket.readyState === 1);
+    }
+
+    function sendVoice(payload) {
+      if (!voiceOpen()) return false;
+      voiceSocket.send(typeof payload === "string" ? payload : JSON.stringify(payload));
+      return true;
+    }
+
+    function isMuted() {
+      return muted;
+    }
+
+    async function armPlayback() {
+      if (!playContext) playContext = new AudioContext({ sampleRate: 24000 });
+      if (playContext.state === "suspended") await playContext.resume();
+      return playContext;
+    }
+
+    function stopPlayback() {
+      playSources.forEach((source) => {
+        try { source.stop(); } catch (err) {}
+      });
+      playSources = [];
+      if (playContext) playNext = playContext.currentTime;
+      if (playWait) {
+        clearTimeout(playWait);
+        playWait = null;
+      }
+    }
+
+    function playbackPending() {
+      if (playSources.length) return true;
+      return !!(playContext && playNext > playContext.currentTime + 0.02);
+    }
+
+    function queuePlayback(pcm) {
+      if (isMuted() || !playContext) return;
+      const samples = new Int16Array(pcm);
+      if (!samples.length) return;
+      const floats = new Float32Array(samples.length);
+      for (let i = 0; i < samples.length; i++) floats[i] = samples[i] / 32768;
+      const buffer = playContext.createBuffer(1, floats.length, 24000);
+      buffer.getChannelData(0).set(floats);
+      const source = playContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(playContext.destination);
+      const now = playContext.currentTime;
+      if (playNext < now) playNext = now;
+      source.start(playNext);
+      playNext += buffer.duration;
+      playSources.push(source);
+      source.onended = () => {
+        playSources = playSources.filter((item) => item !== source);
+      };
+    }
+
+    function afterPlayback(done) {
+      if (playWait) {
+        clearTimeout(playWait);
+        playWait = null;
+      }
+      if (isMuted() || !playContext) {
+        done();
+        return;
+      }
+      const waitMs = Math.max(40, (playNext - playContext.currentTime) * 1000 + 40);
+      playWait = setTimeout(() => {
+        playWait = null;
+        done();
+      }, waitMs);
+    }
+
+    async function startMic() {
+      if (micNode) return;
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("This browser has no microphone capture.");
+      }
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+          channelCount: 1
+        }
+      });
+      micStream.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
+      if (!micContext || micContext.state === "closed") {
+        micContext = new AudioContext();
+      }
+      if (micContext.state === "suspended") await micContext.resume();
+      await micContext.audioWorklet.addModule("./mic-worklet.js");
+      const source = micContext.createMediaStreamSource(micStream);
+      micNode = new AudioWorkletNode(micContext, "mic-capture");
+      const sink = micContext.createGain();
+      sink.gain.value = 0;
+      micNode.port.onmessage = (event) => {
+        if (!sendingPcm || !voiceOpen() || playbackPending()) return;
+        voiceSocket.send(event.data);
+      };
+      source.connect(micNode);
+      micNode.connect(sink);
+      sink.connect(micContext.destination);
+    }
+
+    function stopMic() {
+      sendingPcm = false;
+      if (micNode) {
+        try { micNode.disconnect(); } catch (err) {}
+        micNode.port.onmessage = null;
+        micNode = null;
+      }
+      if (micContext) {
+        micContext.close();
+        micContext = null;
+      }
+      if (micStream) {
+        micStream.getTracks().forEach((track) => track.stop());
+        micStream = null;
+      }
+    }
+
+    function handleVoiceMessage(event) {
+      if (typeof event.data !== "string") {
+        if (!isMuted() && acceptAudio) {
+          armPlayback().then(() => queuePlayback(event.data));
+        }
+        return;
+      }
+      let data = {};
+      try {
+        data = JSON.parse(event.data);
+      } catch (err) {
+        return;
+      }
+      const kind = data.type || "";
+      if (kind === "replaced") {
+        if (voiceSocket && voiceSocket !== event.target) return;
+        voiceRetired = true;
+        listenWanted = false;
+        sendingPcm = false;
+        acceptAudio = false;
+        acceptAudio = false;
+        stopMic();
+        stopFrameLoop();
+        document.getElementById("mic").classList.remove("listening");
+        setVoiceStatus("");
+        return;
+      }
+      if (kind === "pong") {
+        lastVoicePong = Date.now();
+        return;
+      }
+      const box = document.getElementById("answer");
+      const input = document.getElementById("chat-input");
+      if (kind === "starting") {
+        acceptAudio = false;
+        stopPlayback();
+        sendingPcm = listenWanted;
+        if (listenWanted) setVoiceStatus("starting");
+        document.getElementById("mic").classList.remove("listening");
+      } else if (kind === "listening") {
+        acceptAudio = false;
+        stopPlayback();
+        sendingPcm = listenWanted;
+        setVoiceStatus(listenWanted ? "listening" : "");
+        document.getElementById("mic").classList.toggle("listening", listenWanted);
+        if (listenWanted) startFrameLoop();
+      } else if (kind === "thinking") {
+        acceptAudio = true;
+        sendingPcm = false;
+        setVoiceStatus("thinking");
+        if (box.textContent === "" || box.textContent === "Thinking…") {
+          box.textContent = "Thinking…";
+        }
+      } else if (kind === "flush") {
+        acceptAudio = false;
+        stopPlayback();
+      } else if (kind === "speaking") {
+        acceptAudio = true;
+        sendingPcm = false;
+        setVoiceStatus("speaking");
+        armPlayback();
+      } else if (kind === "transcript" && data.text) {
+        input.value = data.text;
+      } else if (kind === "reply" && data.text) {
+        box.textContent = data.text;
+      } else if (kind === "nodes" && Array.isArray(data.ids) && data.ids.length) {
+        showAnswerSources(data.ids);
+      } else if (kind === "error" && data.message) {
+        acceptAudio = false;
+        stopPlayback();
+        box.textContent = data.message;
+        setVoiceStatus("");
+      } else if (kind === "turn_done") {
+        acceptAudio = false;
+        afterPlayback(() => {
+          askBusy = false;
+          document.getElementById("ask").disabled = false;
+          sendVoice({ type: "playback_done" });
+          if (listenWanted) {
+            document.getElementById("mic").classList.add("listening");
+          } else if (voiceStatus === "speaking" || voiceStatus === "thinking") {
+            setVoiceStatus("");
+          }
+        });
+      }
+    }
+
+    function dropVoiceSocket() {
+      if (voiceRetry) {
+        clearTimeout(voiceRetry);
+        voiceRetry = null;
+      }
+      const socket = voiceSocket;
+      voiceSocket = null;
+      voiceOpening = null;
+      if (socket && socket.readyState < 2) {
+        try { socket.close(); } catch (err) {}
+      }
+    }
+
+    function attachVoiceSocket(socket) {
+      voiceSocket = socket;
+      lastVoicePong = Date.now();
+      socket.binaryType = "arraybuffer";
+      socket.onmessage = handleVoiceMessage;
+      socket.onclose = () => {
+        if (voiceSocket !== socket) return;
+        voiceSocket = null;
+        sendingPcm = false;
+        askBusy = false;
+        document.getElementById("ask").disabled = false;
+        if (pageUnloading || voiceRetired) return;
+        if (listenWanted) setVoiceStatus("starting");
+        scheduleVoiceRetry();
+      };
+    }
+
+    function delay(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function openVoiceSocket() {
+      if (pageUnloading || voiceRetired) return Promise.resolve(false);
+      if (voiceOpen()) return Promise.resolve(true);
+      if (voiceOpening) return voiceOpening;
+      voiceOpening = new Promise((resolve) => {
+        const socket = new WebSocket(voiceSocketUrl());
+        let settled = false;
+        const finish = (ok) => {
+          if (settled) return;
+          settled = true;
+          voiceOpening = null;
+          resolve(ok);
+        };
+        socket.onopen = () => {
+          attachVoiceSocket(socket);
+          if (listenWanted) sendVoice({ type: "listen" });
+          finish(true);
+        };
+        socket.onclose = () => {
+          if (voiceSocket === socket) return;
+          finish(false);
+        };
+      });
+      return voiceOpening;
+    }
+
+    async function ensureVoice() {
+      voiceRetired = false;
+      const deadline = Date.now() + 8000;
+      while (Date.now() < deadline) {
+        if (pageUnloading) return false;
+        if (await openVoiceSocket()) return true;
+        if (pageUnloading || voiceRetired) return false;
+        await delay(300);
+      }
+      return false;
+    }
+
+    function scheduleVoiceRetry() {
+      if (voiceRetry || pageUnloading || voiceRetired) return;
+      voiceRetry = setTimeout(() => {
+        voiceRetry = null;
+        if (pageUnloading || voiceRetired || voiceOpen()) return;
+        ensureVoice().then((ok) => {
+          if (!ok) scheduleVoiceRetry();
+        });
+      }, 300);
+    }
+
+    function stopListening() {
+      listenWanted = false;
+      sendingPcm = false;
+      acceptAudio = false;
+      acceptAudio = false;
+      stopFrameLoop();
+      stopPlayback();
+      sendVoice({ type: "abort" });
+      stopMic();
+      document.getElementById("mic").classList.remove("listening");
+      if (voiceStatus === "listening" || voiceStatus === "speaking" || voiceStatus === "thinking") {
+        setVoiceStatus("");
+      }
+    }
+
+    async function toggleListening() {
+      if (listenWanted) {
+        stopListening();
+        return;
+      }
+      const voicePromise = ensureVoice();
+      try {
+        await startMic();
+        await armPlayback();
+      } catch (err) {
+        stopMic();
+        document.getElementById("answer").textContent = "This browser has no microphone capture.";
+        return;
+      }
+      const opened = await voicePromise;
+      if (!opened) {
+        stopMic();
+        document.getElementById("answer").textContent = "The voice server is not running, ဆရာ.";
+        return;
+      }
+      listenWanted = true;
+      sendingPcm = false;
+      setVoiceStatus("starting");
+      document.getElementById("mic").classList.remove("listening");
+      sendVoice({ type: "listen" });
+    }
+
+    setInterval(() => {
+      if (!voiceOpen()) return;
+      if (lastVoicePong && Date.now() - lastVoicePong > VOICE_PONG_DEAD_MS) {
+        try { voiceSocket.close(); } catch (err) {}
+        return;
+      }
+      sendVoice({ type: "ping" });
+    }, VOICE_PING_MS);
+
+    function warmVoice() {
+      if (!pageUnloading) ensureVoice();
+    }
+
+    addEventListener("pagehide", () => {
+      pageUnloading = true;
+      dropVoiceSocket();
+    });
+    addEventListener("beforeunload", () => {
+      pageUnloading = true;
+      dropVoiceSocket();
+    });
+    addEventListener("pageshow", (event) => {
+      pageUnloading = false;
+      if (event.persisted) warmVoice();
+    });
+    addEventListener("pointerdown", () => { armPlayback(); });
+    addEventListener("keydown", () => { armPlayback(); });
+    warmVoice();
+
+    function setBrain(label) {
+      const text = String(label || "Gemini Flash").trim() || "Gemini Flash";
+      document.getElementById("brain").textContent = text;
+      const pill = document.getElementById("brain-pill");
+      if (pill) pill.textContent = `‹ ${text.toUpperCase()} ›`;
+    }
+
+    function isModelCommand(text) {
+      return /^(?:please\s+)?(?:switch(?:\s+(?:the\s+)?(?:brain|model))?\s+to|change(?:\s+(?:the\s+)?(?:brain|model))?\s+to|set(?:\s+(?:the\s+)?(?:brain|model))?\s+to|go\s+back\s+to)\b/i.test(
+        String(text || "").trim()
+      );
+    }
+
+    function setToolStatus(name, on) {
+      document.querySelectorAll(`[data-tool-status="${name}"]`).forEach((el) => {
+        el.classList.toggle("on", !!on);
+        el.textContent = on ? "Connected" : "Not connected";
+      });
+    }
+
+    function setGoogleConnected(data) {
+      const on = !!(data && data.connected);
+      const btn = document.getElementById("google-connect");
+      if (btn) {
+        btn.classList.toggle("connected", on);
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+      }
+      setToolStatus("gmail", !!(data && data.gmail));
+      setToolStatus("calendar", !!(data && data.calendar));
+      setToolStatus("drive", !!(data && data.drive));
+      setToolStatus("docs", !!(data && data.docs));
+      const grant = document.getElementById("google-grant");
+      if (grant) grant.textContent = on ? "Reconnect Google" : "Connect Google";
+      const hint = document.querySelector(".tools-head p");
+      if (hint) {
+        hint.textContent = (data && data.drive && data.docs)
+          ? "Gmail, Calendar, Drive, and Docs after Google is connected."
+          : "Gmail and Calendar are on this login. Reconnect Google to add Drive and Docs.";
+      }
+    }
+
+    async function refreshGoogle() {
+      try {
+        const res = await fetch("/google/status");
+        const data = await res.json();
+        setGoogleConnected(data);
+        return data && typeof data === "object" ? data : null;
+      } catch (err) {
+        return null;
+      }
+    }
+    refreshGoogle();
+
+    async function refreshBrain() {
+      try {
+        const res = await fetch("/model");
+        const data = await res.json();
+        if (data && data.label) setBrain(data.label);
+      } catch (err) {}
+    }
+    refreshBrain();
+
+    function sayFailure(box, line) {
+      box.textContent = line;
+      setVoiceStatus("");
+      askBusy = false;
+      document.getElementById("ask").disabled = false;
+    }
+
+    let shareStream = null;
+
+    function shareTrack() {
+      const tracks = shareStream ? shareStream.getVideoTracks() : [];
+      return tracks[0] || null;
+    }
+
+    function shareIsLive() {
+      const track = shareTrack();
+      const video = document.getElementById("share-preview");
+      return !!(track && track.readyState === "live" && video.videoWidth > 0);
+    }
+
+    function setSeeing(on) {
+      document.getElementById("seeing").classList.toggle("on", on);
+      document.getElementById("screen").classList.toggle("seeing", on);
+    }
+
+    function stopShare() {
+      if (shareStream) {
+        shareStream.getTracks().forEach((track) => track.stop());
+      }
+      shareStream = null;
+      const video = document.getElementById("share-preview");
+      video.srcObject = null;
+      setSeeing(false);
+      stopFrameLoop();
+    }
+
+    async function toggleShare() {
+      if (shareStream) {
+        stopShare();
+        return;
+      }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+        sayFailure(
+          document.getElementById("answer"),
+          "This browser cannot share a screen, ဆရာ."
+        );
+        return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 8 },
+          audio: false
+        });
+        shareStream = stream;
+        const video = document.getElementById("share-preview");
+        video.srcObject = stream;
+        await video.play();
+        if (!video.videoWidth) {
+          await new Promise((resolve) => {
+            video.addEventListener("loadeddata", resolve, { once: true });
+            setTimeout(resolve, 1000);
+          });
+        }
+        const track = shareTrack();
+        if (track) track.addEventListener("ended", stopShare);
+        setSeeing(!!(track && track.readyState === "live"));
+        if (listenWanted) startFrameLoop();
+      } catch (err) {
+        stopShare();
+      }
+    }
+
+    function hasBurmese(text) {
+      return /[\u1000-\u109F]/.test(String(text || ""));
+    }
+
+    function isScreenQuestion(text) {
+      const q = String(text || "").trim();
+      if (!q) return false;
+      if (/^(?:what do you think of this|what am i looking at|what am i doing|what is on my screen|look at this|what do you see)\b/i.test(q)) {
+        return true;
+      }
+      if (/\b(?:on my screen|on the screen|this screen|my screen)\b/i.test(q)) return true;
+      if (/\bscreen\b/i.test(q) && (hasBurmese(q) || /\b(?:what|looking|doing|see|look)\b/i.test(q))) {
+        return true;
+      }
+      return hasBurmese(q) && /(?:မျက်နှာပြင်|စခရင်|ဘာလုပ်|ဘာမြင်|ဘာတွေ|ကြည့်|မြင်ရ)/.test(q);
+    }
+
+    function grabShareJpeg() {
+      const video = document.getElementById("share-preview");
+      const track = shareTrack();
+      if (!track || track.readyState !== "live" || !video.videoWidth) {
+        return Promise.resolve(null);
+      }
+      const maxEdge = 1600;
+      let width = video.videoWidth;
+      let height = video.videoHeight;
+      const longEdge = Math.max(width, height);
+      if (longEdge > maxEdge) {
+        const scale = maxEdge / longEdge;
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext("2d").drawImage(video, 0, 0, width, height);
+      return new Promise((resolve) => {
+        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.85);
+      });
+    }
+
+    function blobToBase64(blob) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const url = String(reader.result || "");
+          const comma = url.indexOf(",");
+          resolve(comma >= 0 ? url.slice(comma + 1) : "");
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+    }
+
+    let frameTimer = null;
+
+    function stopFrameLoop() {
+      if (frameTimer) {
+        clearInterval(frameTimer);
+        frameTimer = null;
+      }
+    }
+
+    async function sendShareFrame() {
+      if (!shareIsLive() || !voiceOpen()) return;
+      const blob = await grabShareJpeg();
+      if (!blob || blob.type !== "image/jpeg") return;
+      const jpeg = await blobToBase64(blob);
+      if (jpeg) sendVoice({ type: "frame", jpeg });
+    }
+
+    function startFrameLoop() {
+      stopFrameLoop();
+      if (!shareIsLive() || !listenWanted) return;
+      sendShareFrame();
+      frameTimer = setInterval(sendShareFrame, 1500);
+    }
+
+    async function ask(message) {
+      const input = document.getElementById("chat-input");
+      const button = document.getElementById("ask");
+      const box = document.getElementById("answer");
+      const text = String(message || "").trim();
+      if (!text) return;
+      input.value = text;
+      button.disabled = true;
+      askBusy = true;
+      const capturing = /^remember that\b/i.test(text);
+      const switching = isModelCommand(text);
+      const wantsScreen = isScreenQuestion(text);
+      box.textContent = capturing
+        ? "Writing that into the notes…"
+        : switching
+          ? "Changing the brain…"
+          : wantsScreen
+            ? "Looking at the screen…"
+            : "Thinking…";
+      setVoiceStatus("thinking");
+      try {
+        if (switching && !capturing) {
+          const res = await fetch("/model", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+          });
+          let data = {};
+          try {
+            data = await res.json();
+          } catch (parseErr) {
+            sayFailure(box, "The brain change failed, ဆရာ. The server sent no answer.");
+            return;
+          }
+          if (data.label) setBrain(data.label);
+          const answer = data.answer || "I have not changed the brain, ဆရာ.";
+          box.textContent = answer;
+          if (voiceStatus === "thinking") setVoiceStatus("");
+          askBusy = false;
+          return;
+        }
+        if (wantsScreen && !capturing) {
+          if (!shareIsLive()) {
+            sayFailure(box, "The share has ended, ဆရာ. I am not looking at a screen.");
+            return;
+          }
+          const blob = await grabShareJpeg();
+          if (!blob || blob.type !== "image/jpeg") {
+            sayFailure(box, "The share has ended, ဆရာ. I am not looking at a screen.");
+            return;
+          }
+          const live = voiceOpen() || await ensureVoice();
+          if (live) {
+            const jpeg = await blobToBase64(blob);
+            if (jpeg && sendVoice({ type: "text", text, jpeg })) {
+              box.textContent = "Looking at the screen…";
+              setVoiceStatus("thinking");
+              return;
+            }
+          }
+          const res = await fetch("/see", {
+            method: "POST",
+            headers: {
+              "Content-Type": "image/jpeg",
+              "X-Question": encodeURIComponent(text)
+            },
+            body: blob
+          });
+          let data = {};
+          try {
+            data = await res.json();
+          } catch (parseErr) {
+            sayFailure(box, "The screen question failed, ဆရာ. The server sent no answer.");
+            return;
+          }
+          const answer = data.answer || "No answer.";
+          box.textContent = answer;
+          if (voiceStatus === "thinking") setVoiceStatus("");
+          askBusy = false;
+          return;
+        }
+        if (capturing) {
+          const res = await fetch("/remember", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text })
+          });
+          let data = {};
+          try {
+            data = await res.json();
+          } catch (parseErr) {
+            sayFailure(box, "The capture failed, ဆရာ. The server sent no answer.");
+            return;
+          }
+          if (!res.ok || !data.ok || !data.node || !data.graph) {
+            sayFailure(box, data.answer || "The capture failed, ဆရာ. I wrote nothing.");
+            return;
+          }
+          adoptGraph(data.graph, { id: data.node.id, anchorId: data.anchorId });
+          const born = GRAPH.nodes.find((node) => node.id === data.node.id) || data.node;
+          pulseThenFly(born);
+          box.textContent = data.answer;
+          if (voiceStatus === "thinking") setVoiceStatus("");
+          askBusy = false;
+          return;
+        }
+        const live = voiceOpen() || await ensureVoice();
+        if (live && sendVoice({ type: "text", text })) {
+          armPlayback();
+          box.textContent = "Thinking…";
+          setVoiceStatus("thinking");
+          return;
+        }
+        const res = await fetch("/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message: text })
+        });
+        const data = await res.json();
+        showChatReply(box, data);
+        if (Array.isArray(data.nodes) && data.nodes.length) {
+          showAnswerSources(data.nodes);
+        }
+        if (voiceStatus === "thinking") setVoiceStatus("");
+        askBusy = false;
+      } catch (err) {
+        if (capturing) {
+          sayFailure(box, "The capture failed, ဆရာ. The brain did not respond.");
+        } else if (switching) {
+          sayFailure(box, "The brain change failed, ဆရာ. The server did not respond.");
+        } else if (wantsScreen) {
+          sayFailure(box, "The screen question failed, ဆရာ. The brain did not respond.");
+        } else {
+          box.textContent = "The brain did not respond. Is the local server running?";
+          setVoiceStatus("");
+          askBusy = false;
+        }
+      } finally {
+        if (!askBusy) button.disabled = false;
+      }
+    }
+
+    function showChatReply(box, data) {
+      const answer = (data && data.answer) || "No answer.";
+      const sends = data && Array.isArray(data.sends) ? data.sends : [];
+      const names = sends
+        .map((item) => String(item || "").trim())
+        .filter(Boolean);
+      if (!names.length) {
+        box.textContent = answer;
+        return;
+      }
+      box.replaceChildren();
+      names.forEach((name) => {
+        const line = document.createElement("div");
+        line.className = "file-sent";
+        line.textContent = "📎 Sent " + name + " to Telegram";
+        box.appendChild(line);
+      });
+      const prose = document.createElement("div");
+      prose.textContent = answer;
+      box.appendChild(prose);
+    }
+
+    let attachTabChoices = [];
+    let attachBusy = false;
+    let attachListGen = 0;
+    let attachListAbort = null;
+
+    function normalizeTitle(value) {
+      return String(value || "").toLowerCase().replace(/\s+/g, " ").trim();
+    }
+
+    function fuzzyTitleScore(pageTitle, tabTitle) {
+      const needle = normalizeTitle(pageTitle);
+      const hay = normalizeTitle(tabTitle);
+      if (!needle || !hay) return 0;
+      if (needle === hay) return 100;
+      if (hay.includes(needle) || needle.includes(hay)) {
+        const shorter = Math.min(needle.length, hay.length);
+        const longer = Math.max(needle.length, hay.length);
+        return 70 + Math.round(20 * shorter / longer);
+      }
+      const words = (text) => text.split(" ").filter((word) => word.length > 2);
+      const left = words(needle);
+      const right = new Set(words(hay));
+      if (!left.length || !right.size) return 0;
+      let shared = 0;
+      left.forEach((word) => {
+        if (right.has(word)) shared += 1;
+      });
+      if (!shared) return 0;
+      return Math.round(50 * shared / Math.max(left.length, right.size));
+    }
+
+    function bestTabForThisPage(tabs) {
+      // Preselect from document.title of the page that has this Web UI open.
+      // The getDisplayMedia() track label is not used: it is not a page title.
+      const pageTitle = String(document.title || "").trim();
+      if (!pageTitle) return -1;
+      let bestIndex = -1;
+      let bestScore = 0;
+      tabs.forEach((tab, index) => {
+        const score = fuzzyTitleScore(pageTitle, tab && tab.title);
+        if (score > bestScore) {
+          bestScore = score;
+          bestIndex = index;
+        }
+      });
+      return bestScore >= 50 ? bestIndex : -1;
+    }
+
+    function captureSelectionInfo() {
+      // Screen share stays a visual aid. getDisplayMedia() returns a video
+      // MediaStream with no DOM access. Do not pass that stream, its frames,
+      // or its tracks into browser automation — it is not a control channel.
+      //
+      // The MediaStream track label for a shared tab is usually a generic
+      // browser-assigned string, not the real page title or URL. Do NOT rely
+      // on parsing it for a title/URL match. A future pass that assumes the
+      // label identifies the page will attach the wrong tab. These fields are
+      // sent only so the server can ignore them; the user confirms the tab.
+      const track = shareTrack();
+      if (!track) return { track_label: "", display_surface: "" };
+      let surface = "";
+      try {
+        const settings = track.getSettings ? track.getSettings() : null;
+        surface = String((settings && settings.displaySurface) || "");
+      } catch (err) {
+        surface = "";
+      }
+      return {
+        track_label: String(track.label || ""),
+        display_surface: surface
+      };
+    }
+
+    function setTabPickerStatus(text) {
+      document.getElementById("tab-picker-status").textContent = text || "";
+    }
+
+    function refreshAttachConfirm() {
+      const selected = document.querySelector('#tab-picker input[name="attach-tab-choice"]:checked');
+      document.getElementById("tab-picker-confirm").disabled = !selected;
+    }
+
+    function hideTabPicker() {
+      attachListGen += 1;
+      if (attachListAbort) {
+        attachListAbort.abort();
+        attachListAbort = null;
+      }
+      attachBusy = false;
+      const button = document.getElementById("attach-tab");
+      if (button) button.disabled = false;
+      document.getElementById("tab-picker").hidden = true;
+      document.getElementById("tab-picker-list").replaceChildren();
+      setTabPickerStatus("");
+      attachTabChoices = [];
+      document.getElementById("tab-picker-confirm").disabled = true;
+    }
+
+    function showAttachedTab(title) {
+      const line = document.getElementById("tab-attached");
+      const name = String(title || "").trim() || "untitled";
+      line.textContent = "🔗 Attached to tab: " + name;
+      line.hidden = false;
+    }
+
+    function renderTabChoices(tabs) {
+      const list = document.getElementById("tab-picker-list");
+      list.replaceChildren();
+      attachTabChoices = tabs;
+      const preferred = bestTabForThisPage(tabs);
+      tabs.forEach((tab, index) => {
+        const label = document.createElement("label");
+        label.className = "tab-choice";
+        const input = document.createElement("input");
+        input.type = "radio";
+        input.name = "attach-tab-choice";
+        input.value = String(index);
+        if (index === preferred) input.checked = true;
+        const title = document.createElement("span");
+        title.className = "tab-choice-title";
+        const titleText = String((tab && tab.title) || "").trim();
+        title.textContent = titleText || "(untitled)";
+        const url = document.createElement("span");
+        url.className = "tab-choice-url";
+        url.textContent = String((tab && tab.url) || "");
+        label.append(input, title, url);
+        list.appendChild(label);
+      });
+      refreshAttachConfirm();
+    }
+
+    async function postAttachHint(body, signal) {
+      const res = await fetch("/browser/attach_hint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+        signal
+      });
+      try {
+        return await res.json();
+      } catch (err) {
+        return { ok: false, error: "The server sent no answer." };
+      }
+    }
+
+    function attachFailureText(data) {
+      if (data && data.error === "ambiguous") {
+        return "That title matches more than one tab. Pick again.";
+      }
+      return (data && data.error) || "Could not attach that tab.";
+    }
+
+    async function letJarvisTakeThisTab() {
+      if (attachBusy) return;
+      attachBusy = true;
+      const gen = ++attachListGen;
+      if (attachListAbort) attachListAbort.abort();
+      const controller = new AbortController();
+      attachListAbort = controller;
+      const button = document.getElementById("attach-tab");
+      button.disabled = true;
+      document.getElementById("tab-picker").hidden = false;
+      document.getElementById("tab-picker-list").replaceChildren();
+      document.getElementById("tab-picker-confirm").disabled = true;
+      setTabPickerStatus("Looking for open tabs…");
+      try {
+        const data = await postAttachHint(captureSelectionInfo(), controller.signal);
+        if (gen !== attachListGen) return;
+        if (!data || !data.ok || !Array.isArray(data.tabs)) {
+          setTabPickerStatus((data && data.error) || "Could not list tabs.");
+          return;
+        }
+        if (!data.tabs.length) {
+          setTabPickerStatus("No open tabs.");
+          return;
+        }
+        setTabPickerStatus("");
+        renderTabChoices(data.tabs);
+      } catch (err) {
+        if (gen !== attachListGen) return;
+        setTabPickerStatus("Could not reach the server.");
+      } finally {
+        if (gen !== attachListGen) return;
+        attachBusy = false;
+        button.disabled = false;
+      }
+    }
+
+    async function confirmTabAttach() {
+      const selected = document.querySelector('#tab-picker input[name="attach-tab-choice"]:checked');
+      if (!selected || attachBusy) return;
+      const tab = attachTabChoices[Number(selected.value)];
+      if (!tab) return;
+      const title = String(tab.title || "").trim();
+      // An empty title cannot identify the row. The URL is the hint then.
+      // The capture track label is never the hint.
+      const hint = title || String(tab.url || "").trim();
+      if (!hint) {
+        setTabPickerStatus("That tab has no title or URL to attach by.");
+        return;
+      }
+      attachBusy = true;
+      const gen = ++attachListGen;
+      if (attachListAbort) attachListAbort.abort();
+      const controller = new AbortController();
+      attachListAbort = controller;
+      document.getElementById("tab-picker-confirm").disabled = true;
+      setTabPickerStatus("Attaching…");
+      try {
+        const data = await postAttachHint({
+          match_hint: hint,
+          index: tab.index,
+          title
+        }, controller.signal);
+        if (gen !== attachListGen) return;
+        if (!data || !data.ok || !data.attached) {
+          setTabPickerStatus(attachFailureText(data));
+          refreshAttachConfirm();
+          return;
+        }
+        const attachedTitle = String(
+          (data.attached && data.attached.title) || title || hint
+        ).trim();
+        showAttachedTab(attachedTitle);
+        hideTabPicker();
+      } catch (err) {
+        if (gen !== attachListGen) return;
+        setTabPickerStatus("Could not reach the server.");
+        refreshAttachConfirm();
+      } finally {
+        if (gen !== attachListGen) return;
+        attachBusy = false;
+      }
+    }
+
+    document.getElementById("chatbar").addEventListener("submit", (event) => {
+      event.preventDefault();
+      ask(document.getElementById("chat-input").value);
+    });
+    document.getElementById("screen").addEventListener("click", toggleShare);
+    document.getElementById("attach-tab").addEventListener("click", () => {
+      letJarvisTakeThisTab();
+    });
+    document.getElementById("tab-picker-list").addEventListener("change", refreshAttachConfirm);
+    document.getElementById("tab-picker-confirm").addEventListener("click", () => {
+      confirmTabAttach();
+    });
+    document.getElementById("tab-picker-cancel").addEventListener("click", hideTabPicker);
+    document.getElementById("mic").addEventListener("click", toggleListening);
+    ensureVoice().then((ok) => {
+      if (!ok) scheduleVoiceRetry();
+    });
+    function setToolsOpen(open) {
+      const drawer = document.getElementById("tools-drawer");
+      drawer.classList.toggle("open", !!open);
+      drawer.setAttribute("aria-hidden", open ? "false" : "true");
+    }
+
+    function startGoogleOAuth() {
+      window.open("http://localhost:4700/oauth/start", "google-oauth", "popup,width=520,height=740");
+      const timer = setInterval(async () => {
+        const data = await refreshGoogle();
+        if (data && data.drive && data.docs) clearInterval(timer);
+      }, 1500);
+      setTimeout(() => clearInterval(timer), 180000);
+    }
+
+    document.getElementById("google-connect").addEventListener("click", () => {
+      setToolsOpen(true);
+    });
+    document.getElementById("tools-close").addEventListener("click", () => setToolsOpen(false));
+    document.getElementById("tools-backdrop").addEventListener("click", () => setToolsOpen(false));
+    document.getElementById("google-grant").addEventListener("click", startGoogleOAuth);
+    addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        setToolsOpen(false);
+        hideTabPicker();
+      }
+    });
+  </script>
+</body>
+</html>

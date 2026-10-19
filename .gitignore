@@ -1,0 +1,27 @@
+# Python bytecode and local environments.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Live credentials. config.json holds API keys, the Google client secret,
+# and the Telegram bot token. google_refresh_token.json holds the OAuth refresh token.
+config.json
+google_refresh_token.json
+
+# Local desk state. Tasks, pairing codes, and the Telegram update offset.
+tasks.json
+pocket_state.json
+
+# Chromium user-data dir. Holds session cookies after a login in the browser session.
+browser_profile/
+
+# Append-only browser action log. Typed field text is stored; passwords are redacted.
+browser_actions.log
+
+# PCM captured while debug_dump_audio is on. Microphone audio.
+debug_audio/
+
+# Scratch capture from a local see-tool check. Not referenced by the app.
+_see_test.jpg
