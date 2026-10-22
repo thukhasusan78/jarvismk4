@@ -751,5 +751,112 @@ class ConnectionGenerationTests(unittest.TestCase):
         self.assertNotIn(audio, queued)
 
 
+class _StubTurnSession:
+    """Session stub whose sends succeed; the model reply never arrives."""
+
+    async def send_client_content(self, **kwargs: object) -> None:
+        return None
+
+    async def send_tool_response(self, **kwargs: object) -> None:
+        return None
+
+
+async def _wait_for_turn_timeout(coro, timeout=None):  # type: ignore[no-untyped-def]
+    # Operational sends keep their short real timeouts; the long turn wait
+    # (25s+) times out immediately so the latch behaviour is testable.
+    if timeout is not None and timeout >= 20:
+        coro.close()
+        raise asyncio.TimeoutError()
+    return await _REAL_WAIT_FOR(coro, timeout)
+
+
+_REAL_WAIT_FOR = asyncio.wait_for
+
+
+class GeminiTimeoutLatchTests(unittest.TestCase):
+    """A timed-out turn must release the latch that keepalive defers to.
+
+    Regression: wait/send paths returned "gemini timeout" without setting
+    _turn_done, so _model_turn_open() stayed true forever and keepalive
+    skipped both the silence heartbeat and recovery — the session died
+    silently and never reconnected.
+    """
+
+    def _brain(self) -> GeminiLiveBrain:
+        brain = GeminiLiveBrain(LiveSettings(), KeyPool(["test-key"]), "sys")
+        brain._session = _StubTurnSession()  # type: ignore[assignment]
+        brain._start_receive_loop = lambda: None  # type: ignore[method-assign]
+        return brain
+
+    def test_wait_turn_result_timeout_releases_latch(self) -> None:
+        brain = self._brain()
+        brain._turn = TurnResult(input_text="hello")
+        brain._turn_done = asyncio.Event()
+        recovered: list[BaseException] = []
+
+        async def fake_recover(exc: BaseException, **kwargs: object) -> None:
+            recovered.append(exc)
+
+        brain._recover_after_transient = fake_recover  # type: ignore[method-assign]
+
+        async def run() -> TurnResult:
+            asyncio.wait_for = _wait_for_turn_timeout  # type: ignore[misc]
+            try:
+                result = await brain.wait_turn_result()
+            finally:
+                asyncio.wait_for = _REAL_WAIT_FOR  # type: ignore[misc]
+            self.assertTrue(brain._turn_done.is_set())
+            self.assertFalse(brain._model_turn_open())
+            # Consequence: keepalive must attempt recovery again, not surrender.
+            brain._session = None
+            await brain._keepalive_once()
+            await brain.close()
+            return result
+
+        result = asyncio.run(run())
+        self.assertEqual(result.error, "gemini timeout")
+        self.assertEqual(len(recovered), 1)
+
+    def test_send_user_turn_timeout_releases_latch(self) -> None:
+        brain = self._brain()
+
+        async def run() -> tuple[TurnResult, bool]:
+            asyncio.wait_for = _wait_for_turn_timeout  # type: ignore[misc]
+            try:
+                result = await brain.send_user_turn("hello")
+            finally:
+                asyncio.wait_for = _REAL_WAIT_FOR  # type: ignore[misc]
+            # Judge the latch before close(): cancel() would mask a latch.
+            latched = brain._model_turn_open()
+            await brain.close()
+            return result, latched
+
+        result, latched = asyncio.run(run())
+        self.assertEqual(result.error, "gemini timeout")
+        self.assertFalse(latched)
+
+    def test_continue_with_functions_timeout_releases_latch(self) -> None:
+        brain = self._brain()
+        brain._turn = TurnResult(input_text="prior question")
+
+        async def run() -> tuple[TurnResult, bool, bool]:
+            asyncio.wait_for = _wait_for_turn_timeout  # type: ignore[misc]
+            try:
+                result = await brain.continue_with_functions(
+                    [{"name": "lookup", "response": {"result": 1}}]
+                )
+            finally:
+                asyncio.wait_for = _REAL_WAIT_FOR  # type: ignore[misc]
+            latched = brain._model_turn_open()
+            awaiting = brain._awaiting_tool_followup
+            await brain.close()
+            return result, latched, awaiting
+
+        result, latched, awaiting = asyncio.run(run())
+        self.assertEqual(result.error, "gemini timeout")
+        self.assertFalse(latched)
+        self.assertFalse(awaiting)
+
+
 if __name__ == "__main__":
     unittest.main()

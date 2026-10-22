@@ -258,6 +258,17 @@ class GeminiLiveBrain:
             and not self._turn_done.is_set()
         )
 
+    def _release_turn_latch(self) -> None:
+        """Mark a turn finished when this side stops waiting for it.
+
+        A local timeout or give-up must not leave _model_turn_open() true
+        forever: keepalive treats an open turn as the socket's owner and
+        then skips both the silence heartbeat and recovery, so the Live
+        session dies silently and never reconnects.
+        """
+        if self._turn_done and not self._turn_done.is_set():
+            self._turn_done.set()
+
     def _start_keepalive(self) -> None:
         if self._closed:
             return
@@ -703,6 +714,7 @@ class GeminiLiveBrain:
                 turn.input_text,
                 turn.output_text,
             )
+            self._release_turn_latch()
             return TurnResult(error="gemini timeout", input_text=turn.input_text)
         finished = self._turn or TurnResult()
         self._log_turn_complete(finished)
@@ -757,6 +769,7 @@ class GeminiLiveBrain:
             await asyncio.wait_for(self._turn_done.wait(), timeout=25)
         except Exception as exc:
             if is_timeout_error(exc):
+                self._release_turn_latch()
                 return TurnResult(error="gemini timeout", input_text=prior)
             if is_transient_gemini_error(exc):
                 await self._recover_after_transient(exc, restart_receive=True)
@@ -764,6 +777,7 @@ class GeminiLiveBrain:
                 result.transient_disconnect = True
                 result.error = None
                 return result
+            self._release_turn_latch()
             return TurnResult(error=str(exc), input_text=prior)
         finally:
             self._awaiting_tool_followup = False
@@ -789,8 +803,10 @@ class GeminiLiveBrain:
             await self._ensure_session()
         except Exception as exc:
             log.warning("gemini.text_turn_connect_failed error=%s", exc)
+            self._release_turn_latch()
             return TurnResult(error=str(exc), input_text=cleaned)
         if self._session is None:
+            self._release_turn_latch()
             return TurnResult(error="gemini unavailable", input_text=cleaned)
 
         self._start_receive_loop()
@@ -834,12 +850,14 @@ class GeminiLiveBrain:
         except Exception as exc:
             if is_timeout_error(exc):
                 log.warning("gemini.text_turn_timeout")
+                self._release_turn_latch()
                 await self.finish_audio()
                 return TurnResult(input_text=cleaned, error="gemini timeout")
             if is_transient_gemini_error(exc):
                 await self._recover_after_transient(exc, restart_receive=True)
                 return TurnResult(input_text=cleaned, transient_disconnect=True)
             log.warning("gemini.text_turn_failed error=%s", exc)
+            self._release_turn_latch()
             return TurnResult(error=str(exc), input_text=cleaned)
         finished = self._turn or TurnResult()
         finished.input_text = cleaned
