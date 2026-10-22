@@ -323,7 +323,9 @@ class LiveTurnRecoveryTests(unittest.TestCase):
             )
             self.assertTrue(recovered)
             self.assertEqual(closed, ["close"])
-            self.assertIsNone(brain._resumption_handle)
+            # Updated for the F4 fix: a 1011 is a transient error, not a
+            # dead-resumption rejection, so the handle is kept for resume.
+            self.assertEqual(brain._resumption_handle, "stale-handle")
             self.assertTrue(brain._streaming)
             self.assertFalse(brain._activity_started)
             self.assertIsNotNone(brain._turn)
@@ -837,6 +839,61 @@ async def _wait_for_turn_timeout(coro, timeout=None):  # type: ignore[no-untyped
 
 
 _REAL_WAIT_FOR = asyncio.wait_for
+
+
+class GeminiResumptionHandleTests(unittest.TestCase):
+    """Only a dead-resumption rejection may drop the resumption handle.
+
+    Regression: _recover_after_transient also dropped it on 1011 /
+    internal errors — the common transient disconnects — so most real
+    reconnects started a fresh session with no conversation context.
+    """
+
+    def _recover(self, error_text: str) -> str | None:
+        brain = GeminiLiveBrain(LiveSettings(), KeyPool(["test-key"]), "sys")
+        brain._session = object()  # type: ignore[assignment]
+        brain._resumption_handle = "handle-123"
+
+        async def close_socket() -> None:
+            brain._session = None
+
+        async def connect() -> bool:
+            brain._session = object()  # type: ignore[assignment]
+            return True
+
+        brain._close_live_socket = close_socket  # type: ignore[method-assign]
+        brain._connect_attempts = connect  # type: ignore[method-assign]
+
+        async def run() -> str | None:
+            try:
+                await brain._recover_after_transient(
+                    RuntimeError(error_text), restart_receive=False
+                )
+                return brain._resumption_handle
+            finally:
+                await brain.close()
+
+        return asyncio.run(run())
+
+    def test_1011_keeps_the_resumption_handle(self) -> None:
+        self.assertEqual(
+            self._recover("received 1011 (internal error); then sent 1011"),
+            "handle-123",
+        )
+
+    def test_internal_error_keeps_the_resumption_handle(self) -> None:
+        self.assertEqual(
+            self._recover("internal error occurred"), "handle-123"
+        )
+
+    def test_dead_resumption_drops_the_handle(self) -> None:
+        self.assertIsNone(
+            self._recover(
+                "received 1008 (policy violation) BidiGenerateContent "
+                "session not found; then sent 1008 (policy violation) "
+                "BidiGenerateContent session not found"
+            )
+        )
 
 
 class GeminiTimeoutLatchTests(unittest.TestCase):

@@ -1030,8 +1030,11 @@ class GeminiLiveBrain:
         while typed turns still spoke.
         """
         log.warning("gemini.transient_disconnect error=%s", exc)
-        text = str(exc).lower()
-        drop_handle = is_dead_resumption(exc) or "1011" in text or "internal error" in text
+        # Only an explicit dead-resumption rejection proves the handle is
+        # useless. 1011 / internal errors are the common transient case:
+        # dropping the handle there throws away the conversation context
+        # on exactly the reconnects resumption exists for.
+        drop_handle = is_dead_resumption(exc)
         was_listening = self._streaming
         async with self._reconnect_lock:
             if self._closed:
