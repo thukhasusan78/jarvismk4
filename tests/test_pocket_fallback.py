@@ -52,7 +52,7 @@ class PocketFallbackTests(unittest.TestCase):
         desk_before = server.history_snapshot()
         captured: dict[str, str] = {}
 
-        def fake_loop(keys, prompt, include_google=True, model=None):
+        def fake_loop(keys, prompt, include_google=True, model=None, handoff_note=""):
             captured["prompt"] = prompt
             return "Friday it is.", False, []
 
