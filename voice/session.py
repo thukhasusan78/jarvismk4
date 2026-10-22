@@ -904,6 +904,24 @@ def decode_jpeg(raw: Any) -> bytes | None:
     return data
 
 
+def _is_client_ping(raw: str) -> bool:
+    try:
+        payload = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return False
+    return (
+        isinstance(payload, dict)
+        and str(payload.get("type") or "").strip() == "ping"
+    )
+
+
+async def _await_tasks(tasks: set[asyncio.Task]) -> set[asyncio.Task]:
+    if not tasks:
+        return set()
+    done, _pending = await asyncio.wait(tasks)
+    return done
+
+
 def _recoverable_live_error(error: str | None) -> bool:
     """Live glitches the desk can retry. They are not a broken brain."""
     text = " ".join(str(error or "").split()).strip().lower()
@@ -951,19 +969,64 @@ class VoiceSession:
         self._last_client = time.monotonic()
 
     async def run(self) -> None:
+        # Receiving and handling are decoupled: one slow handler (a mic
+        # chunk whose push triggers an inline Gemini reconnect can take
+        # ~a minute) must not starve the app-level ping. The reader answers
+        # pings immediately; everything else keeps its relative order on a
+        # queue drained by a single worker, dispatched exactly as before.
+        queue: asyncio.Queue[Any] = asyncio.Queue()
+
+        async def reader() -> None:
+            try:
+                async for message in self.ws:
+                    if self._closed:
+                        return
+                    if isinstance(message, (bytes, str)):
+                        self._touch()
+                        if isinstance(message, str) and _is_client_ping(message):
+                            await self.send_json({"type": "pong"})
+                            if self._brain is not None:
+                                self._brain.nudge_keepalive()
+                            continue
+                        queue.put_nowait(message)
+            finally:
+                queue.put_nowait(None)
+
+        async def worker() -> None:
+            while True:
+                message = await queue.get()
+                if message is None or self._closed:
+                    return
+                if isinstance(message, bytes):
+                    await self._on_binary(message)
+                elif isinstance(message, str):
+                    await self._on_text(message)
+
         try:
             await self.send_json({"type": "ready"})
             self._preconnect_task = asyncio.create_task(self._preconnect())
-            async for message in self.ws:
-                if self._closed:
-                    return
-                if isinstance(message, bytes):
-                    self._touch()
-                    await self._on_binary(message)
+            tasks = {
+                asyncio.create_task(reader()),
+                asyncio.create_task(worker()),
+            }
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            if pending:
+                # Reader finished: give the worker a brief chance to drain
+                # what is already queued, then stop it like the old loop
+                # stopped on socket close.
+                await asyncio.wait(pending, timeout=1.0)
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                done |= await _await_tasks(pending)
+            for task in done:
+                if task.cancelled():
                     continue
-                if isinstance(message, str):
-                    self._touch()
-                    await self._on_text(message)
+                exc = task.exception()
+                if exc is not None and not self._closed:
+                    log.info("voice.socket_closed error=%s", exc)
         except Exception as exc:
             if not self._closed:
                 log.info("voice.socket_closed error=%s", exc)

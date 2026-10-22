@@ -413,6 +413,72 @@ class VoicePrewarmTests(unittest.TestCase):
 
         asyncio.run(run())
 
+    def test_ping_gets_pong_while_binary_handler_is_blocked(self) -> None:
+        # Regression: the old serial run() loop awaited each binary chunk
+        # inline, so a slow push_pcm (inline reconnect) starved pings and
+        # the browser killed the socket after 25s without a pong.
+        class ScriptedSocket:
+            def __init__(self, messages: list[object]) -> None:
+                self._messages = messages
+                self.sent: list[str] = []
+                self.closed = False
+
+            async def send(self, payload: str) -> None:
+                self.sent.append(payload)
+
+            async def close(self) -> None:
+                self.closed = True
+
+            def __aiter__(self):  # type: ignore[no-untyped-def]
+                return self._gen()
+
+            async def _gen(self):  # type: ignore[no-untyped-def]
+                for message in self._messages:
+                    yield message
+
+        async def run() -> tuple[list[str], list[str], int]:
+            release = asyncio.Event()
+            handled: list[str] = []
+            ws = ScriptedSocket(
+                [b"\x00\x01pcm", json.dumps({"type": "ping"})]
+            )
+            session = VoiceSession(ws)
+            brain = FakeBrain()
+            session._brain = brain
+
+            async def slow_binary(message: bytes) -> None:
+                handled.append("binary-start")
+                await release.wait()
+                handled.append("binary-done")
+
+            session._on_binary = slow_binary  # type: ignore[method-assign]
+            run_task = asyncio.create_task(session.run())
+            try:
+                deadline = asyncio.get_running_loop().time() + 3.0
+                while not any(
+                    '"pong"' in payload for payload in ws.sent
+                ):
+                    if asyncio.get_running_loop().time() > deadline:
+                        raise AssertionError(
+                            "pong was starved by the blocked binary handler"
+                        )
+                    await asyncio.sleep(0.01)
+                # Pong arrived while the binary handler was still blocked.
+                self.assertEqual(handled, ["binary-start"])
+                release.set()
+                await asyncio.wait_for(run_task, timeout=5)
+            finally:
+                release.set()
+                if not run_task.done():
+                    run_task.cancel()
+                session._brain = None
+            return handled, list(ws.sent), brain.nudges
+
+        handled, sent, nudges = asyncio.run(run())
+        self.assertEqual(handled, ["binary-start", "binary-done"])
+        self.assertTrue(any('"pong"' in payload for payload in sent))
+        self.assertEqual(nudges, 1)
+
     def test_warm_listen_begins_before_returning(self) -> None:
         async def run() -> None:
             ws = FakeClientSocket()
