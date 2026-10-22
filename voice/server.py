@@ -38,8 +38,10 @@ async def _handler(ws: Any) -> None:
     # that inline while the preload still holds the import lock freezes the loop.
     try:
         await asyncio.shield(_ensure_preload())
-    except Exception:
-        pass
+    except Exception as exc:
+        # Not fatal here (the session retries the gate build), but a VAD
+        # preload failure must be diagnosable instead of silent.
+        log.warning("voice.preload_failed error=%s", exc)
     async with _swap_lock:
         previous = _current
         session = VoiceSession(ws)

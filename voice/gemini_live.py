@@ -13,6 +13,13 @@ from voice.debug_audio import UPLINK_PCM_RATE, note_speech
 
 log = logging.getLogger(__name__)
 
+try:
+    from websockets.exceptions import ConcurrencyError
+except Exception:  # websockets missing: keepalive must degrade, not crash
+
+    class ConcurrencyError(Exception):  # type: ignore[no-redef]
+        """Stand-in so the except clause in _ping_session still resolves."""
+
 # One counter for every Live socket attempt, including reconnects.
 # Mic sends read this at send time so a mid-utterance reconnect retags later chunks.
 _generation_lock = threading.Lock()
@@ -43,8 +50,29 @@ def _close_reason_for(exc: BaseException) -> str:
         return "timeout"
     return "error"
 
+
+def _put_sentinel(queue: "asyncio.Queue[Any]") -> None:
+    """Enqueue the None end-of-turn marker even when the queue is full:
+    drop the oldest item to make room, because consumers wait on it."""
+    try:
+        queue.put_nowait(None)
+        return
+    except asyncio.QueueFull:
+        pass
+    try:
+        queue.get_nowait()
+    except Exception:
+        pass
+    try:
+        queue.put_nowait(None)
+    except Exception:
+        pass
+
 _RECONNECT_DELAYS_S = (0.3, 0.8, 2.0)
 _GOAWAY_KEEPALIVE_S = 5.0
+# Turn output queues are bounded so a stalled consumer cannot grow them
+# for the life of the brain; producers drop the oldest item when full.
+TURN_QUEUE_MAXSIZE = 1024
 KEEPALIVE_INTERVAL_S = 10.0
 KEEPALIVE_PONG_TIMEOUT_S = 5.0
 # 60 ms of 16 kHz s16le silence. Gemini aborts an idle Live socket after ~150s
@@ -206,9 +234,13 @@ class GeminiLiveBrain:
         self._audio_out_bytes = 0
         self._last_turn_complete = False
         self._awaiting_tool_followup = False
-        self._audio_q: asyncio.Queue[bytes | None] = asyncio.Queue()
+        self._audio_q: asyncio.Queue[bytes | None] = asyncio.Queue(
+            maxsize=TURN_QUEUE_MAXSIZE
+        )
         self._audio_closed = False
-        self._reply_q: asyncio.Queue[str | None] = asyncio.Queue()
+        self._reply_q: asyncio.Queue[str | None] = asyncio.Queue(
+            maxsize=TURN_QUEUE_MAXSIZE
+        )
         self._last_reply = ""
         self._closed = False
         self._keepalive_interval_s = KEEPALIVE_INTERVAL_S
@@ -375,8 +407,6 @@ class GeminiLiveBrain:
         if ws is None:
             return False
         try:
-            from websockets.exceptions import ConcurrencyError
-
             waiter = await ws.ping()
             await asyncio.wait_for(waiter, timeout=self._keepalive_pong_timeout_s)
             return True
@@ -530,9 +560,9 @@ class GeminiLiveBrain:
                     raise
 
     def _reset_turn_queues(self) -> None:
-        self._audio_q = asyncio.Queue()
+        self._audio_q = asyncio.Queue(maxsize=TURN_QUEUE_MAXSIZE)
         self._audio_closed = False
-        self._reply_q = asyncio.Queue()
+        self._reply_q = asyncio.Queue(maxsize=TURN_QUEUE_MAXSIZE)
         self._last_reply = ""
         self._audio_out_bytes = 0
 
@@ -1101,7 +1131,19 @@ class GeminiLiveBrain:
         for chunk in chunks:
             if chunk:
                 self._audio_out_bytes += len(chunk)
-                self._audio_q.put_nowait(chunk)
+                try:
+                    self._audio_q.put_nowait(chunk)
+                except asyncio.QueueFull:
+                    # Bounded queue, stalled consumer: drop the oldest
+                    # chunk instead of growing memory without limit.
+                    try:
+                        self._audio_q.get_nowait()
+                    except Exception:
+                        pass
+                    try:
+                        self._audio_q.put_nowait(chunk)
+                    except Exception:
+                        pass
 
     def _publish_reply(self, text: str) -> None:
         cleaned = " ".join((text or "").split()).strip()
@@ -1269,20 +1311,14 @@ class GeminiLiveBrain:
         if self._audio_closed:
             return
         self._audio_closed = True
-        try:
-            self._audio_q.put_nowait(None)
-        except Exception:
-            pass
-        try:
-            self._reply_q.put_nowait(None)
-        except Exception:
-            pass
+        _put_sentinel(self._audio_q)
+        _put_sentinel(self._reply_q)
 
     def discard_output(self) -> None:
         """Drop audio already queued for a turn the server is answering itself."""
         self._audio_closed = True
-        self._audio_q = asyncio.Queue()
-        self._reply_q = asyncio.Queue()
+        self._audio_q = asyncio.Queue(maxsize=TURN_QUEUE_MAXSIZE)
+        self._reply_q = asyncio.Queue(maxsize=TURN_QUEUE_MAXSIZE)
         self._last_reply = ""
         try:
             self._audio_q.put_nowait(None)

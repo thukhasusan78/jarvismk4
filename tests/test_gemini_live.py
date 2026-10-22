@@ -844,6 +844,42 @@ async def _wait_for_turn_timeout(coro, timeout=None):  # type: ignore[no-untyped
 _REAL_WAIT_FOR = asyncio.wait_for
 
 
+class GeminiRobustnessTests(unittest.TestCase):
+    def test_concurrency_error_is_a_module_level_name(self) -> None:
+        # Regression: _ping_session imported ConcurrencyError inside the
+        # try, so with websockets unavailable the except clause itself
+        # raised UnboundLocalError and keepalive failed in a loop.
+        import voice.gemini_live as gemini_live_module
+
+        self.assertTrue(hasattr(gemini_live_module, "ConcurrencyError"))
+        self.assertTrue(
+            isinstance(gemini_live_module.ConcurrencyError, type)
+            and issubclass(gemini_live_module.ConcurrencyError, BaseException)
+        )
+
+    def test_turn_output_queues_are_bounded(self) -> None:
+        from voice.gemini_live import TURN_QUEUE_MAXSIZE
+
+        brain = GeminiLiveBrain(LiveSettings(), KeyPool(["test-key"]), "sys")
+        self.assertEqual(brain._audio_q.maxsize, TURN_QUEUE_MAXSIZE)
+        self.assertEqual(brain._reply_q.maxsize, TURN_QUEUE_MAXSIZE)
+
+        async def run() -> None:
+            brain._publish_audio(
+                [b"x" * 64] * (TURN_QUEUE_MAXSIZE + 10)
+            )
+            self.assertLessEqual(brain._audio_q.qsize(), TURN_QUEUE_MAXSIZE)
+            # The None sentinel must still get through a full queue.
+            await brain.finish_audio()
+            items: list[object] = []
+            while not brain._audio_q.empty():
+                items.append(brain._audio_q.get_nowait())
+            self.assertIn(None, items)
+            await brain.close()
+
+        asyncio.run(run())
+
+
 class GeminiGoAwayReconnectTests(unittest.TestCase):
     def _brain(self) -> GeminiLiveBrain:
         return GeminiLiveBrain(LiveSettings(), KeyPool(["test-key"]), "sys")

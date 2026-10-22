@@ -10,6 +10,18 @@ from voice.gemini_live import OUTPUT_PCM_RATE, GeminiLiveBrain, KeyPool
 
 log = logging.getLogger(__name__)
 
+# A gate wait must fail visibly instead of hanging a turn forever when the
+# other side never releases the brain.
+GATE_WAIT_TIMEOUT_S = 120.0
+
+
+async def _gate_wait(cv: asyncio.Condition, who: str) -> None:
+    try:
+        await asyncio.wait_for(cv.wait(), timeout=GATE_WAIT_TIMEOUT_S)
+    except (asyncio.TimeoutError, TimeoutError) as exc:
+        log.warning("hub.gate_wait_timeout who=%s", who)
+        raise TimeoutError(f"hub {who} gate wait timed out") from exc
+
 
 @dataclass
 class LiveReply:
@@ -63,7 +75,7 @@ class LiveHub:
         cv = self._condition()
         async with cv:
             while self._text:
-                await cv.wait()
+                await _gate_wait(cv, "mic")
             self._mic += 1
 
     async def mic_exit(self) -> None:
@@ -77,7 +89,7 @@ class LiveHub:
         cv = self._condition()
         async with cv:
             while self._mic or self._text:
-                await cv.wait()
+                await _gate_wait(cv, "text")
             self._text += 1
 
     async def text_exit(self) -> None:
@@ -140,7 +152,13 @@ class LiveHub:
         if gate["action"] == "wait":
             return LiveReply(text=gate["reply"])
         await _yield_idle_mic()
-        await self.text_enter()
+        try:
+            await self.text_enter()
+        except TimeoutError:
+            return LiveReply(
+                text="The brain stayed busy with the desk for too long. "
+                "Ask again in a moment, ဆရာ."
+            )
         try:
             await _yield_idle_mic()
             try:

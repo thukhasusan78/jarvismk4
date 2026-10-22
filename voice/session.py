@@ -904,6 +904,21 @@ def decode_jpeg(raw: Any) -> bytes | None:
     return data
 
 
+def _log_socket_error(exc: BaseException) -> None:
+    """Clean closes stay at INFO; anything unexpected is a WARNING so a
+    real receive failure is not buried among routine disconnects."""
+    try:
+        from websockets.exceptions import ConnectionClosedOK
+
+        clean = isinstance(exc, ConnectionClosedOK)
+    except Exception:
+        clean = False
+    if clean:
+        log.info("voice.socket_closed error=%s", exc)
+    else:
+        log.warning("voice.socket_error error=%s", exc)
+
+
 def _is_client_ping(raw: str) -> bool:
     try:
         payload = json.loads(raw or "{}")
@@ -976,6 +991,21 @@ class VoiceSession:
         # queue drained by a single worker, dispatched exactly as before.
         queue: asyncio.Queue[Any] = asyncio.Queue()
 
+        async def watchdog() -> None:
+            # _last_client is touched on every client message; a live page
+            # pings every 10s, so 90s of silence means a zombie page the
+            # protocol ping cannot reap (the OS still answers it). Closing
+            # the socket ends the reader and runs the normal cleanup.
+            while not self._closed:
+                await asyncio.sleep(10)
+                if time.monotonic() - self._last_client > 90:
+                    log.warning("voice.watchdog_stale_client")
+                    try:
+                        await self.ws.close()
+                    except Exception:
+                        pass
+                    return
+
         async def reader() -> None:
             try:
                 async for message in self.ws:
@@ -1002,9 +1032,11 @@ class VoiceSession:
                 elif isinstance(message, str):
                     await self._on_text(message)
 
+        watchdog_task: asyncio.Task | None = None
         try:
             await self.send_json({"type": "ready"})
             self._preconnect_task = asyncio.create_task(self._preconnect())
+            watchdog_task = asyncio.create_task(watchdog())
             tasks = {
                 asyncio.create_task(reader()),
                 asyncio.create_task(worker()),
@@ -1026,11 +1058,13 @@ class VoiceSession:
                     continue
                 exc = task.exception()
                 if exc is not None and not self._closed:
-                    log.info("voice.socket_closed error=%s", exc)
+                    _log_socket_error(exc)
         except Exception as exc:
             if not self._closed:
-                log.info("voice.socket_closed error=%s", exc)
+                _log_socket_error(exc)
         finally:
+            if watchdog_task is not None and not watchdog_task.done():
+                watchdog_task.cancel()
             await self.close()
 
     async def close(self) -> None:
