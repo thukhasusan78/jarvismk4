@@ -841,6 +841,87 @@ async def _wait_for_turn_timeout(coro, timeout=None):  # type: ignore[no-untyped
 _REAL_WAIT_FOR = asyncio.wait_for
 
 
+class GeminiGoAwayReconnectTests(unittest.TestCase):
+    def _brain(self) -> GeminiLiveBrain:
+        return GeminiLiveBrain(LiveSettings(), KeyPool(["test-key"]), "sys")
+
+    def test_stale_reconnect_skip_reschedules_when_session_is_gone(self) -> None:
+        brain = self._brain()
+        old_token = object()
+        new_token = object()
+        brain._session = None
+        brain._session_token = new_token  # type: ignore[assignment]
+        recovered: list[object] = []
+
+        async def fake_recover(exc: BaseException, **kwargs: object) -> bool:
+            recovered.append(kwargs.get("dead_token"))
+            return True
+
+        brain._recover_after_transient = fake_recover  # type: ignore[method-assign]
+
+        async def run() -> None:
+            brain._schedule_reconnect(0.01, old_token)
+            stale = brain._reconnect_task
+            assert stale is not None
+            await stale
+            # The stale skip must leave a fresh reconnect scheduled.
+            fresh = brain._reconnect_task
+            self.assertIsNotNone(fresh)
+            self.assertIsNot(fresh, stale)
+            await asyncio.wait_for(fresh, timeout=5)  # type: ignore[arg-type]
+            await brain.close()
+
+        asyncio.run(run())
+        self.assertEqual(recovered, [new_token])
+
+    def test_go_away_unparseable_time_keeps_handle(self) -> None:
+        brain = self._brain()
+        brain._session = object()  # type: ignore[assignment]
+        brain._resumption_handle = "handle-xyz"
+
+        async def fake_recover(exc: BaseException, **kwargs: object) -> bool:
+            return True
+
+        brain._recover_after_transient = fake_recover  # type: ignore[method-assign]
+
+        async def run() -> None:
+            await brain._handle_go_away(SimpleNamespace(time_left=None))
+            self.assertEqual(brain._resumption_handle, "handle-xyz")
+            await brain._handle_go_away(SimpleNamespace(time_left="3s"))
+            self.assertIsNone(brain._resumption_handle)
+            await brain.close()
+
+        asyncio.run(run())
+
+    def test_ensure_connected_reports_failure(self) -> None:
+        brain = self._brain()
+
+        async def failing_ensure() -> None:
+            raise RuntimeError("cannot connect")
+
+        async def close_socket() -> None:
+            return None
+
+        brain._ensure_session = failing_ensure  # type: ignore[method-assign]
+        brain._close_live_socket = close_socket  # type: ignore[method-assign]
+
+        async def ok_ensure() -> None:
+            return None
+
+        async def run() -> tuple[bool, bool]:
+            failed = await brain.ensure_connected()
+            brain._session = object()  # type: ignore[assignment]
+            brain._ensure_session = ok_ensure  # type: ignore[method-assign]
+            brain._start_receive_loop = lambda: None  # type: ignore[method-assign]
+            ok = await brain.ensure_connected()
+            await brain.close()
+            return failed, ok
+
+        failed, ok = asyncio.run(run())
+        self.assertFalse(failed)
+        self.assertTrue(ok)
+
+
 class GeminiResumptionHandleTests(unittest.TestCase):
     """Only a dead-resumption rejection may drop the resumption handle.
 

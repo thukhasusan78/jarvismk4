@@ -36,6 +36,13 @@ class LiveHub:
     def current(self) -> GeminiLiveBrain | None:
         return self._brain
 
+    async def _connect_brain(self) -> None:
+        brain = self._brain
+        if brain is not None and not await brain.ensure_connected():
+            # ensure_connected no longer hides failure: without a session
+            # the state recorded below would describe a dead brain.
+            log.warning("hub.brain_not_connected")
+
     def _condition(self) -> asyncio.Condition:
         loop = asyncio.get_running_loop()
         if self._cv is None or self._gate_loop is not loop:
@@ -97,7 +104,7 @@ class LiveHub:
                     raise RuntimeError("gemini-missing")
                 self._brain = GeminiLiveBrain(live_settings(), KeyPool(keys), instruction)
                 await self._brain.configure_tools(decls)
-                await self._brain.ensure_connected()
+                await self._connect_brain()
                 self._tools_ready = tools_ready
                 self._pocket_on = pocket_on
                 self._instruction = instruction
@@ -110,13 +117,13 @@ class LiveHub:
             if changed:
                 self._brain.set_system_instruction(instruction)
                 await self._brain.configure_tools(decls)
-                await self._brain.ensure_connected()
+                await self._connect_brain()
                 self._tools_ready = tools_ready
                 self._pocket_on = pocket_on
                 self._instruction = instruction
             elif not self._brain.has_session:
                 self._brain.set_system_instruction(instruction)
-                await self._brain.ensure_connected()
+                await self._connect_brain()
             return self._brain
 
     async def ask(self, text: str) -> LiveReply:

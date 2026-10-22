@@ -231,7 +231,9 @@ class GeminiLiveBrain:
         self._tools = declarations
         await self.close()
 
-    async def ensure_connected(self) -> None:
+    async def ensure_connected(self) -> bool:
+        """Connect if needed. False means the brain still has no session:
+        callers must not treat that as a successful prewarm."""
         self._cancelled = False
         self._closed = False
         async with self._reconnect_lock:
@@ -242,9 +244,10 @@ class GeminiLiveBrain:
                 log.warning("gemini.preconnect_failed error=%s", exc)
                 self._close_reason = _close_reason_for(exc)
                 await self._close_live_socket()
-                return
+                return False
         self._start_keepalive()
         log.info("gemini.prewarmed model=%s", self.settings.gemini_model)
+        return self._session is not None
 
     def _model_turn_open(self) -> bool:
         """True while a model reply is in flight. Idle and silent listen stay pingable."""
@@ -983,11 +986,23 @@ class GeminiLiveBrain:
             return
         if self._activity_started and self._turn_done and not self._turn_done.is_set():
             try:
-                await asyncio.wait_for(self._turn_done.wait(), timeout=25)
+                # Cap the turn wait by the scheduled delay so the reconnect
+                # still starts before the goAway deadline passes.
+                await asyncio.wait_for(
+                    self._turn_done.wait(),
+                    timeout=min(25, max(1.0, delay_s)),
+                )
             except Exception:
                 pass
         if self._cancelled or self._session_token != token:
             log.info("gemini.go_away_reconnect skipped")
+            # A stale skip must not leave nothing scheduled: if the socket
+            # is gone and nobody else is already reconnecting, queue a
+            # fresh attempt against the current token.
+            if not self._cancelled and not self._closed and self._session is None:
+                if self._reconnect_task is asyncio.current_task():
+                    self._reconnect_task = None
+                self._schedule_reconnect(1.0, self._session_token)
             return
         log.info("gemini.go_away_reconnect")
         await self._recover_after_transient(
@@ -1009,7 +1024,10 @@ class GeminiLiveBrain:
             self._schedule_reconnect(delay, self._session_token)
             return
         self._cancel_reconnect_task()
-        self._resumption_handle = None
+        if seconds is not None:
+            self._resumption_handle = None
+        # An unparseable time_left (seconds is None) says nothing about
+        # the resumption handle's validity, so the handle is kept then.
         await self._recover_after_transient(
             RuntimeError("gemini go_away"),
             restart_receive=False,
