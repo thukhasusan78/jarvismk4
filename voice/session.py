@@ -36,12 +36,12 @@ import pocket
 log = logging.getLogger(__name__)
 
 UPLINK_FRAME_SECONDS = 0.06
-# ~2 s of gated PCM while Gemini Live connects. A longer hold dumps a
-# backlog into the model and the turn fails.
-UPLINK_HOLD_FRAMES = 33
-MAX_FORWARDED_AUDIO_SECONDS = 15.0
-MIN_TURN_SECONDS = 0.4
-MAX_UTTERANCE_SECONDS = 30.0
+# ~6 s of gated PCM while Gemini Live connects, so the start of a sentence
+# survives a slow connect instead of being evicted from the hold.
+UPLINK_HOLD_FRAMES = 100
+MAX_FORWARDED_AUDIO_SECONDS = 30.0
+MIN_TURN_SECONDS = 0.3
+MAX_UTTERANCE_SECONDS = 45.0
 MAX_UTTERANCE_BYTES = 1_000_000
 LISTEN_IDLE_SECONDS = 8.0
 BRAIN_READY_TIMEOUT_S = 8.0
@@ -1165,7 +1165,7 @@ class VoiceSession:
         Keeping the state also skips the cold-start energy fallback, which is
         what lets a steady noise floor through in the first 1.5 s.
         """
-        limit = _config_float("state_reset_idle_s", 5.0)
+        limit = _config_float("state_reset_idle_s", 12.0)
         last = self._last_uplink
         if last <= 0:
             idle = None

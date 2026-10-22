@@ -20,7 +20,7 @@ SILERO_CONTEXT_SAMPLES = 64
 VAD_BACKEND = "silero"
 VAD_SPEECH_THRESHOLD = 0.5
 VAD_MIN_SPEECH_MS = 180.0
-VAD_MIN_SILENCE_MS = 800.0
+VAD_MIN_SILENCE_MS = 1200.0
 VAD_PREROLL_CHUNKS = 3
 # Audio before the open decision. The attack window is 180 ms and used to
 # fill the whole preroll, so the onset ("What") never reached Gemini.

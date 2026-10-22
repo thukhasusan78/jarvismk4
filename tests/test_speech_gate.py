@@ -156,7 +156,8 @@ class SpeechGateTests(unittest.TestCase):
         for _ in range(3):
             gate.process(first)
         self.assertTrue(gate.is_open)
-        for _ in range(14):
+        # 20 quiet 60ms frames = the 1200ms endpointing silence.
+        for _ in range(20):
             gate.process(quiet)
         self.assertFalse(gate.is_open)
         opened = None
@@ -167,7 +168,7 @@ class SpeechGateTests(unittest.TestCase):
         self.assertNotIn(first, opened)
         self.assertEqual(opened[-3:], [second, second, second])
 
-    def test_hangover_expires_once_after_800ms_nonspeech(self) -> None:
+    def test_hangover_expires_once_after_1200ms_nonspeech(self) -> None:
         gate = self.energy_gate()
         loud = pcm_amp(2000)
         quiet = pcm_amp(0)
@@ -181,7 +182,7 @@ class SpeechGateTests(unittest.TestCase):
                 expired += 1
                 self.assertEqual(emitted, [])
                 self.assertFalse(gate.is_open)
-                self.assertEqual(index, 13)
+                self.assertEqual(index, 19)
                 break
             self.assertEqual(emitted, [quiet])
             self.assertEqual(gate.last_reason, "hangover")

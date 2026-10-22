@@ -27,7 +27,9 @@ class MicCapture extends AudioWorkletProcessor {
       const a = this._at(index);
       const b = this._at(index + 1);
       const sample = (a + (b - a) * frac) * MIC_GAIN;
-      const clipped = Math.max(-1, Math.min(1, sample));
+      // Soft-clip instead of hard-clipping: tanh keeps loud speech smooth
+      // instead of flattening the waveform into harsh distortion.
+      const clipped = Math.tanh(sample);
       pcm[i] = clipped < 0 ? clipped * 0x8000 : clipped * 0x7fff;
     }
     this._read += FRAME_SAMPLES * this._ratio;

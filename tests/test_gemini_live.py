@@ -557,7 +557,9 @@ class VoicePrewarmTests(unittest.TestCase):
                     session._gate._elapsed_ms, session._gate.config.warmup_ms
                 )
 
-                session._last_uplink = time.monotonic() - 6.0
+                # The idle-reset default is now 12s, so use a 13s gap for
+                # the "long gap resets" leg (a 6s gap now stays warm).
+                session._last_uplink = time.monotonic() - 13.0
                 await session._start_listen()
                 self.assertEqual(scorer.resets, 3)
                 self.assertEqual(session._gate._elapsed_ms, 0.0)
@@ -662,7 +664,8 @@ class VoiceEndpointTests(unittest.TestCase):
                 quiet = array.array("h", [0] * 960).tobytes()
                 for _ in range(6):
                     await session._on_binary(loud)
-                for _ in range(16):
+                # Endpointing silence is 1200ms now: 22 quiet 60ms frames.
+                for _ in range(22):
                     await session._on_binary(quiet)
                 turn = session._turn_task
                 if turn is not None:
