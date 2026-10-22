@@ -4,6 +4,31 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Jarvis Second Brain</title>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script>
+    // three r160 (the last UMD build) has no THREE.Timer, which 3d-force-graph 1.80
+    // expects when an external THREE is present. Shim it with Clock-like semantics.
+    if (window.THREE && !THREE.Timer) {
+      THREE.Timer = class Timer {
+        constructor() { this._last = performance.now(); this._delta = 0; this._elapsed = 0; this._timescale = 1; }
+        connect() {}
+        disconnect() {}
+        dispose() {}
+        reset() { this._last = performance.now(); this._delta = 0; return this; }
+        setTimescale(scale) { this._timescale = scale; return this; }
+        getTimescale() { return this._timescale; }
+        update(timestamp) {
+          const now = timestamp !== undefined ? timestamp : performance.now();
+          this._delta = ((now - this._last) / 1000) * this._timescale;
+          this._last = now;
+          this._elapsed += this._delta;
+          return this;
+        }
+        getDelta() { return this._delta; }
+        getElapsedTime() { return this._elapsed; }
+      };
+    }
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/3d-force-graph@1.80.0/dist/3d-force-graph.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three-spritetext@1.10.0/dist/three-spritetext.min.js"></script>
   <script src="./graph-data.js"></script>
@@ -578,8 +603,8 @@
     <h2>Top hubs</h2>
     <div id="hubs"></div>
     <h2>Forces</h2>
-    <div class="slider-row">Repel <input id="repel" type="range" min="40" max="280" value="120"></div>
-    <div class="slider-row">Link length <input id="linklen" type="range" min="20" max="160" value="36"></div>
+    <div class="slider-row">Repel <input id="repel" type="range" min="5" max="120" value="18"></div>
+    <div class="slider-row">Link length <input id="linklen" type="range" min="15" max="120" value="30"></div>
   </aside>
 
   <div id="right-stack" class="hud">
@@ -755,9 +780,14 @@
       Digital: "#3dca84",
       Metrics: "#e6b325",
       Risks: "#e23b3b",
-      captures: "#ffcf6e"
+      captures: "#ffcf6e",
+      Jarvis: "#22d3ee",
+      Mickey: "#f0a35e",
+      Business: "#e6b325",
+      Biography: "#a78bfa",
+      Hardware: "#5ad48a"
     };
-    const HOME = { x: 0, y: 40, z: 360 };
+    const HOME = { x: 0, y: 40, z: 300 };
     const fallback = ["#6ea8ff", "#5ad48a", "#f0a35e", "#f3b3d4", "#5fd0c8", "#f2d15c"];
     const PULSE_MS = 700;
     const degree = new Map();
@@ -1181,7 +1211,7 @@
       .backgroundColor("rgba(0,0,0,0)")
       .showNavInfo(false)
       .nodeRelSize(4)
-      .nodeResolution(64)
+      .nodeResolution(32)
       .nodeVal((n) => n.val)
       .nodeOpacity(1)
       .nodeColor(nodeColor)
@@ -1202,7 +1232,7 @@
       .onNodeClick(focusNode)
       .onBackgroundClick(clearFocus);
 
-    const pixelRatio = Math.max(window.devicePixelRatio || 1, 2);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
     Graph.renderer().setPixelRatio(pixelRatio);
     addEventListener("resize", () => Graph.renderer().setPixelRatio(pixelRatio));
 
@@ -1236,7 +1266,7 @@
         const lit = pulsing || isNodeLit(node);
         const color = new THREE.Color(colorFor(node.group));
         const sphere = new THREE.Mesh(
-          new THREE.SphereGeometry(2.7 + Math.min(node.val, 8) * 0.42, 16, 16),
+          new THREE.SphereGeometry(3.6 + Math.min(node.val, 10) * 0.65, 24, 24),
           new THREE.MeshLambertMaterial({
             color,
             emissive: color,
@@ -1248,16 +1278,22 @@
         sphere.userData.nodeId = node.id;
         const sprite = new SpriteText(node.label);
         sprite.color = lit ? "#e8eef8" : "#4a5568";
-        sprite.textHeight = 3.2;
-        sprite.position.y = 6;
+        sprite.textHeight = 4.2;
+        sprite.position.y = 9;
         group.add(sphere);
         group.add(sprite);
         return group;
       }).nodeThreeObjectExtend(false);
     }
 
-    Graph.d3Force("charge").strength(-120);
-    Graph.d3Force("link").distance(36);
+    Graph.d3Force("charge").strength(-18);
+    let framedOnce = false;
+    Graph.onEngineStop(() => {
+      if (framedOnce) return;
+      framedOnce = true;
+      Graph.zoomToFit(900, 50);
+    });
+    Graph.d3Force("link").distance(30);
     Graph.controls().autoRotate = true;
     Graph.controls().autoRotateSpeed = 0.35;
     Graph.cameraPosition(HOME);
